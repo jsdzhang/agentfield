@@ -295,6 +295,10 @@ haxen verify audit.json
 
 Haxen uses a **two-layer design**: a stateless **control plane** (like K8s control plane) and independent **agent nodes** (like pods):
 
+<div align="center">
+<img src="assets/arch.png" alt="AgentField Architecture - Control Plane and Agent Nodes" width="100%" />
+</div>
+
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │                   HAXEN CONTROL PLANE                             │

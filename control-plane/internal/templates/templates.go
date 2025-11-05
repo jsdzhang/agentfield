@@ -2,23 +2,25 @@ package templates
 
 import (
 	"embed"
+	"fmt"
 	"io/fs"
 	"strings"
 	"text/template"
 )
 
-//go:embed agent/*.tmpl agent/*/*.tmpl
+//go:embed python/*.tmpl go/*.tmpl
 var content embed.FS
 
 // TemplateData holds the data to be passed to the templates.
 type TemplateData struct {
-	ProjectName string
-	NodeID      string
-	Port        int
-	CreatedAt   string
-	AuthorName  string
-	AuthorEmail string
-	CurrentYear int
+	ProjectName string // "my-awesome-agent"
+	NodeID      string // "my-awesome-agent" (same as ProjectName)
+	GoModule    string // "my-awesome-agent" (Go module name)
+	AuthorName  string // "John Doe"
+	AuthorEmail string // "john@example.com"
+	CurrentYear int    // 2025
+	CreatedAt   string // "2025-01-05 10:30:00 EST"
+	Language    string // "python" or "go"
 }
 
 // GetTemplate retrieves a specific template by its path.
@@ -30,28 +32,45 @@ func GetTemplate(name string) (*template.Template, error) {
 	return tmpl, nil
 }
 
-// GetTemplateFiles returns a map of template file paths relative to the embed.FS root.
-func GetTemplateFiles() (map[string]string, error) {
+// GetTemplateFiles returns a map of template file paths for the specified language.
+// The map keys are the template paths in the embed.FS, and values are the destination paths.
+func GetTemplateFiles(language string) (map[string]string, error) {
 	files := make(map[string]string)
-	err := fs.WalkDir(content, ".", func(path string, d fs.DirEntry, err error) error {
+
+	// Determine the language directory
+	langDir := language
+	if language != "python" && language != "go" {
+		return nil, fmt.Errorf("unsupported language: %s (supported: python, go)", language)
+	}
+
+	// Walk the language-specific directory
+	err := fs.WalkDir(content, langDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() {
-			// Remove the "agent/" prefix and ".tmpl" suffix
-			relativePath := strings.TrimPrefix(path, "agent/")
+		if !d.IsDir() && strings.HasSuffix(path, ".tmpl") {
+			// Remove the language prefix and .tmpl suffix
+			// e.g., "python/main.py.tmpl" -> "main.py"
+			relativePath := strings.TrimPrefix(path, langDir+"/")
 			relativePath = strings.TrimSuffix(relativePath, ".tmpl")
 			files[path] = relativePath
 		}
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
+
 	return files, nil
 }
 
 // ReadTemplateContent reads the content of an embedded template file.
 func ReadTemplateContent(path string) ([]byte, error) {
 	return content.ReadFile(path)
+}
+
+// GetSupportedLanguages returns the list of supported languages.
+func GetSupportedLanguages() []string {
+	return []string{"python", "go"}
 }

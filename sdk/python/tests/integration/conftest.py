@@ -69,6 +69,8 @@ class BrainServerInfo:
 def brain_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
     repo_root = Path(__file__).resolve().parents[4]
     brain_go_root = repo_root / "apps" / "platform" / "brain"
+    if not brain_go_root.exists():
+        pytest.skip("Brain server sources not available in this checkout")
     build_dir = tmp_path_factory.mktemp("brain-server-bin")
     binary_name = "brain-test-server.exe" if os.name == "nt" else "brain-test-server"
     binary_path = build_dir / binary_name

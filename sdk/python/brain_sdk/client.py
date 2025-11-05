@@ -81,6 +81,12 @@ class BrainClient:
         self._async_http_client_lock: Optional[asyncio.Lock] = None
         self._result_cache = ResultCache(self.async_config)
         self._latest_event_stream_headers: Dict[str, str] = {}
+        self._current_workflow_context = None
+
+    def _generate_id(self, prefix: str) -> str:
+        timestamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        random_suffix = f"{random.getrandbits(32):08x}"
+        return f"{prefix}_{timestamp}_{random_suffix}"
 
     def _build_event_stream_headers(
         self, source_headers: Optional[Dict[str, str]]
@@ -101,6 +107,22 @@ class BrainClient:
                 event_headers[key] = value
         return event_headers
 
+    def _get_headers_with_context(
+        self, headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, str]:
+        """Merge caller headers with the active workflow context headers."""
+
+        merged = dict(headers or {})
+        context = getattr(self, "_current_workflow_context", None)
+        if context and hasattr(context, "to_headers"):
+            try:
+                context_headers = context.to_headers()
+            except Exception:
+                context_headers = {}
+            for key, value in (context_headers or {}).items():
+                merged.setdefault(key, value)
+        return merged
+
     def _maybe_update_event_stream_headers(
         self, source_headers: Optional[Dict[str, str]]
     ) -> None:
@@ -110,9 +132,17 @@ class BrainClient:
             return
 
         new_headers = self._build_event_stream_headers(source_headers)
+
+        if not new_headers and source_headers is None and self._current_workflow_context:
+            try:
+                context_headers = self._current_workflow_context.to_headers()
+            except Exception:
+                context_headers = {}
+            new_headers = self._build_event_stream_headers(context_headers)
+
         if new_headers:
             self._latest_event_stream_headers = new_headers
-        elif not self._latest_event_stream_headers and source_headers is None:
+        elif source_headers is None and not self._latest_event_stream_headers:
             # No headers from context yet; keep empty state.
             self._latest_event_stream_headers = {}
 
@@ -413,9 +443,10 @@ class BrainClient:
     def _prepare_execution_headers(
         self, headers: Optional[Dict[str, str]]
     ) -> Dict[str, str]:
+        merged_headers = self._get_headers_with_context(headers)
+
         final_headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if headers:
-            final_headers.update(headers)
+        final_headers.update(merged_headers)
 
         run_id = final_headers.get("X-Run-ID") or final_headers.get("x-run-id")
         if not run_id:

@@ -58,11 +58,14 @@ class ExecutionContext:
         The Brain backend issues fresh execution IDs for child nodes.
         """
 
+        parent_execution = self.parent_execution_id or self.execution_id
+
         headers: Dict[str, str] = {
             _RUN_HEADER: self.run_id,
             "X-Workflow-ID": self.workflow_id or self.run_id,
-            _PARENT_EXECUTION_HEADER: self.execution_id,
+            _PARENT_EXECUTION_HEADER: parent_execution,
             _EXECUTION_HEADER: self.execution_id,
+            "X-Workflow-Run-ID": self.run_id,
         }
 
         if self.session_id:
@@ -107,6 +110,13 @@ class ExecutionContext:
             parent_workflow_id=self.workflow_id,
             root_workflow_id=self.root_workflow_id or self.workflow_id,
         )
+
+    def create_child_context(self) -> "ExecutionContext":
+        """
+        Backwards-compatible wrapper returning a derived child context.
+        """
+
+        return self.child_context()
 
     # ------------------------------------------------------------------
     # Factories

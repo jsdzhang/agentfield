@@ -1756,11 +1756,19 @@ class Agent(FastAPI):
         )
 
     def _ensure_call_semaphore(self) -> asyncio.Semaphore:
-        if self._call_semaphore is None:
-            with self._call_semaphore_guard:
-                if self._call_semaphore is None:
-                    self._call_semaphore = asyncio.Semaphore(self._max_concurrent_calls)
-        return self._call_semaphore
+        semaphore = getattr(self, "_call_semaphore", None)
+        if semaphore is None:
+            guard = getattr(self, "_call_semaphore_guard", None)
+            if guard is None:
+                guard = threading.Lock()
+                setattr(self, "_call_semaphore_guard", guard)
+            max_calls = max(1, getattr(self, "_max_concurrent_calls", 1))
+            with guard:
+                semaphore = getattr(self, "_call_semaphore", None)
+                if semaphore is None:
+                    semaphore = asyncio.Semaphore(max_calls)
+                    setattr(self, "_call_semaphore", semaphore)
+        return semaphore
 
     @asynccontextmanager
     async def _limit_outbound_calls(self):

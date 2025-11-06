@@ -146,6 +146,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+          cache: true
+          cache-dependency-path: control-plane/go.sum
 
       - name: Install cross-compilers
         if: matrix.label == 'linux'
@@ -161,6 +163,17 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: control-plane/web/client/package-lock.json
+
+      - name: Install MinGW toolchain
+        if: matrix.label == 'windows'
+        shell: pwsh
+        run: |
+          choco install mingw --no-progress -y
+          $mingwPath = 'C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin'
+          if (-not (Test-Path $mingwPath)) {
+            throw "Expected MinGW path not found: $mingwPath"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $mingwPath
 
       - name: Run GoReleaser build
         uses: goreleaser/goreleaser-action@v6

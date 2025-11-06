@@ -115,3 +115,27 @@ export interface WorkflowTimelineNode {
     timestamp: string;
   }[];
 }
+
+export interface WorkflowDAGLightweightNode {
+  execution_id: string;
+  parent_execution_id?: string;
+  agent_node_id: string;
+  reasoner_id: string;
+  status: string;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+  workflow_depth: number;
+}
+
+export interface WorkflowDAGLightweightResponse {
+  root_workflow_id: string;
+  workflow_status: string;
+  workflow_name: string;
+  session_id?: string;
+  actor_id?: string;
+  total_nodes: number;
+  max_depth: number;
+  timeline: WorkflowDAGLightweightNode[];
+  mode: 'lightweight';
+}

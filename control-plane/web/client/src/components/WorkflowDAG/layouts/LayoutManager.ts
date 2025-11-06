@@ -5,18 +5,151 @@ import { ELKLayoutEngine, type ELKLayoutType } from './ELKLayoutEngine';
 export type DagreLayoutType = 'tree' | 'flow';
 export type AllLayoutType = DagreLayoutType | ELKLayoutType;
 
+interface LayoutWorkerRequestMessage {
+  id: string;
+  nodes: Node[];
+  edges: Edge[];
+  layoutType: AllLayoutType;
+}
+
+type LayoutWorkerResponseMessage =
+  | { id: string; type: 'progress'; value: number }
+  | { id: string; type: 'result'; nodes: Node[]; edges: Edge[] }
+  | { id: string; type: 'error'; message: string };
+
 export interface LayoutManagerConfig {
   smallGraphThreshold: number; // Threshold for switching to ELK layouts
   performanceThreshold: number; // Threshold for virtualized rendering
+  enableWorker?: boolean;
 }
+
+const DEFAULT_CONFIG: LayoutManagerConfig = {
+  smallGraphThreshold: 50,
+  performanceThreshold: 300,
+  enableWorker: false,
+};
 
 export class LayoutManager {
   private elkEngine: ELKLayoutEngine;
   private config: LayoutManagerConfig;
+  private layoutWorker?: Worker;
+  private pendingWorkerRequests = new Map<
+    string,
+    {
+      resolve: (value: { nodes: Node[]; edges: Edge[] }) => void;
+      reject: (error: Error) => void;
+      onProgress?: (progress: number) => void;
+    }
+  >();
+  private workerRequestCounter = 0;
+  private workerEnabled: boolean;
 
-  constructor(config: LayoutManagerConfig = { smallGraphThreshold: 50, performanceThreshold: 300 }) {
+  constructor(config: Partial<LayoutManagerConfig> = {}) {
     this.elkEngine = new ELKLayoutEngine();
-    this.config = config;
+    this.config = { ...DEFAULT_CONFIG, ...config };
+
+    const shouldEnableWorker =
+      this.config.enableWorker === true &&
+      typeof window !== 'undefined' &&
+      typeof Worker !== 'undefined' &&
+      typeof URL !== 'undefined';
+
+    this.workerEnabled = shouldEnableWorker;
+
+    if (this.workerEnabled) {
+      this.initializeWorker();
+    }
+  }
+
+  private initializeWorker(): void {
+    try {
+      this.layoutWorker = new Worker(new URL('./layoutWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+
+      this.layoutWorker.onmessage = (event: MessageEvent<LayoutWorkerResponseMessage>) =>
+        this.handleWorkerMessage(event);
+      this.layoutWorker.onerror = (event) => {
+        console.error('Layout worker error:', event.message);
+        this.rejectPendingWorkerRequests(
+          new Error(`layout worker error: ${event.message ?? 'unknown error'}`),
+        );
+        this.disposeWorker();
+      };
+    } catch (error) {
+      console.warn('Failed to initialize layout worker, falling back to main thread:', error);
+      this.layoutWorker = undefined;
+      this.workerEnabled = false;
+    }
+  }
+
+  private handleWorkerMessage(event: MessageEvent<LayoutWorkerResponseMessage>): void {
+    const message = event.data;
+    const pending = this.pendingWorkerRequests.get(message.id);
+    if (!pending) {
+      return;
+    }
+
+    if (message.type === 'progress') {
+      pending.onProgress?.(message.value);
+      return;
+    }
+
+    this.pendingWorkerRequests.delete(message.id);
+
+    if (message.type === 'result') {
+      pending.onProgress?.(100);
+      pending.resolve({ nodes: message.nodes, edges: message.edges });
+    } else if (message.type === 'error') {
+      pending.reject(new Error(message.message));
+      this.disposeWorker();
+    }
+  }
+
+  private rejectPendingWorkerRequests(error: Error): void {
+    this.pendingWorkerRequests.forEach(({ reject }) => reject(error));
+    this.pendingWorkerRequests.clear();
+  }
+
+  private disposeWorker(): void {
+    if (this.layoutWorker) {
+      this.layoutWorker.terminate();
+      this.layoutWorker = undefined;
+    }
+    this.pendingWorkerRequests.clear();
+    this.workerEnabled = false;
+  }
+
+  private applyLayoutWithWorker(
+    nodes: Node[],
+    edges: Edge[],
+    layoutType: AllLayoutType,
+    onProgress?: (progress: number) => void,
+  ): Promise<{ nodes: Node[]; edges: Edge[] }> {
+    if (!this.layoutWorker) {
+      return this.applyLayoutMainThread(nodes, edges, layoutType, onProgress);
+    }
+
+    const requestId = `layout-${++this.workerRequestCounter}`;
+
+    return new Promise((resolve, reject) => {
+      this.pendingWorkerRequests.set(requestId, { resolve, reject, onProgress });
+      try {
+        onProgress?.(0);
+        this.layoutWorker!.postMessage({
+          id: requestId,
+          nodes,
+          edges,
+          layoutType,
+        } as LayoutWorkerRequestMessage);
+      } catch (error) {
+        this.pendingWorkerRequests.delete(requestId);
+        console.warn('Failed to post layout job to worker, falling back to main thread:', error);
+        this.applyLayoutMainThread(nodes, edges, layoutType, onProgress)
+          .then(resolve)
+          .catch(reject);
+      }
+    });
   }
 
   /**
@@ -84,6 +217,24 @@ export class LayoutManager {
     edges: Edge[],
     layoutType: AllLayoutType,
     onProgress?: (progress: number) => void
+  ): Promise<{ nodes: Node[]; edges: Edge[] }> {
+    if (this.layoutWorker) {
+      try {
+        return await this.applyLayoutWithWorker(nodes, edges, layoutType, onProgress);
+      } catch (error) {
+        console.warn('Layout worker failed, falling back to main thread:', error);
+        this.disposeWorker();
+      }
+    }
+
+    return this.applyLayoutMainThread(nodes, edges, layoutType, onProgress);
+  }
+
+  private async applyLayoutMainThread(
+    nodes: Node[],
+    edges: Edge[],
+    layoutType: AllLayoutType,
+    onProgress?: (progress: number) => void,
   ): Promise<{ nodes: Node[]; edges: Edge[] }> {
     onProgress?.(0);
 
@@ -216,6 +367,22 @@ export class LayoutManager {
    * Update configuration
    */
   updateConfig(newConfig: Partial<LayoutManagerConfig>): void {
-    this.config = { ...this.config, ...newConfig };
+    const merged = { ...this.config, ...newConfig };
+    const workerStateChanged = merged.enableWorker !== this.config.enableWorker;
+    this.config = merged;
+
+    if (workerStateChanged) {
+      if (this.config.enableWorker && !this.workerEnabled) {
+        this.workerEnabled =
+          typeof window !== 'undefined' &&
+          typeof Worker !== 'undefined' &&
+          typeof URL !== 'undefined';
+        if (this.workerEnabled) {
+          this.initializeWorker();
+        }
+      } else if (!this.config.enableWorker && this.workerEnabled) {
+        this.disposeWorker();
+      }
+    }
   }
 }

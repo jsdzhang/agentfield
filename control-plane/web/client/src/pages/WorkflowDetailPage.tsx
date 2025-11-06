@@ -28,7 +28,7 @@ interface WorkflowDAGNode {
   parent_workflow_id?: string;
   parent_execution_id?: string;
   workflow_depth: number;
-  children: WorkflowDAGNode[];
+  children?: WorkflowDAGNode[];
   agent_name?: string;
   task_name?: string;
 }

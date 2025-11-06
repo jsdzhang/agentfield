@@ -2,7 +2,8 @@ import type {
   WorkflowsResponse,
   EnhancedExecutionsResponse,
   ExecutionViewFilters,
-  WorkflowSummary
+  WorkflowSummary,
+  WorkflowDAGLightweightResponse,
 } from '../types/workflows';
 import { normalizeExecutionStatus } from '../utils/status';
 
@@ -300,9 +301,29 @@ export async function getWorkflowDetails(workflowId: string): Promise<any> {
   return fetchWrapper<any>(`/workflows/${workflowId}/details`);
 }
 
+export interface WorkflowDAGRequestOptions {
+  lightweight?: boolean;
+  signal?: AbortSignal;
+}
+
 // Get workflow DAG data
-export async function getWorkflowDAG(workflowId: string): Promise<any> {
-  return fetchWrapper<any>(`/workflows/${workflowId}/dag`);
+export async function getWorkflowDAG<T = any>(
+  workflowId: string,
+  options: WorkflowDAGRequestOptions = {}
+): Promise<T> {
+  const { lightweight = false, signal } = options;
+  const query = lightweight ? '?mode=lightweight' : '';
+  return fetchWrapper<T>(`/workflows/${workflowId}/dag${query}`, { signal });
+}
+
+export async function getWorkflowDAGLightweight(
+  workflowId: string,
+  signal?: AbortSignal
+): Promise<WorkflowDAGLightweightResponse> {
+  return getWorkflowDAG<WorkflowDAGLightweightResponse>(workflowId, {
+    lightweight: true,
+    signal,
+  });
 }
 
 export async function getWorkflowRunDetail(

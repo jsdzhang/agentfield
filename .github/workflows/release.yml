@@ -343,7 +343,7 @@ jobs:
           path: sdk/python/dist
 
       - name: Publish to PyPI
-        if: needs.prepare.outputs.publish_pypi == 'true'
+        if: needs.prepare.outputs.publish_pypi == 'true' && !contains(needs.prepare.outputs.tag_name, 'alpha') && !contains(needs.prepare.outputs.tag_name, 'beta') && !contains(needs.prepare.outputs.tag_name, 'rc')
         working-directory: sdk/python
         env:
           TWINE_USERNAME: __token__

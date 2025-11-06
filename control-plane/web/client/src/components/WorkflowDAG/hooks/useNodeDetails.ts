@@ -1,5 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 
+interface CachedNodeDetails {
+  data: NodeDetails;
+  timestamp: number;
+}
+
+const NODE_DETAILS_CACHE = new Map<string, CachedNodeDetails>();
+const CACHE_TTL_MS = 60_000; // 1 minute cache to prevent repeated fetches when reopen sidebar
+
 interface NodeDetails {
   input?: any;
   output?: any;
@@ -24,12 +32,22 @@ export function useNodeDetails(executionId?: string): UseNodeDetailsReturn {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchNodeDetails = useCallback(async () => {
+  const fetchNodeDetails = useCallback(async (forceRefresh: boolean = false) => {
     if (!executionId) {
       setNodeDetails(undefined);
       setLoading(false);
       setError(null);
       return;
+    }
+
+    if (!forceRefresh) {
+      const cached = NODE_DETAILS_CACHE.get(executionId);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+        setNodeDetails(cached.data);
+        setLoading(false);
+        setError(null);
+        return;
+      }
     }
 
     setLoading(true);
@@ -68,6 +86,10 @@ export function useNodeDetails(executionId?: string): UseNodeDetailsReturn {
       console.log(`🔍 SIDEBAR DEBUG: Output available:`, !!details.output);
 
       setNodeDetails(details);
+      NODE_DETAILS_CACHE.set(executionId, {
+        data: details,
+        timestamp: Date.now(),
+      });
     } catch (err) {
       console.error('🔍 SIDEBAR DEBUG: Error fetching node details:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch execution details');
@@ -78,7 +100,7 @@ export function useNodeDetails(executionId?: string): UseNodeDetailsReturn {
   }, [executionId]);
 
   const refetch = useCallback(() => {
-    fetchNodeDetails();
+    fetchNodeDetails(true);
   }, [fetchNodeDetails]);
 
   useEffect(() => {

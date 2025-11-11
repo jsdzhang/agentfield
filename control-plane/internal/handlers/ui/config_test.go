@@ -542,6 +542,11 @@ func (m *MockStorageProvider) ListExecutionVCs(ctx context.Context, filters type
 	return args.Get(0).([]*types.ExecutionVCInfo), args.Error(1)
 }
 
+func (m *MockStorageProvider) CountExecutionVCs(ctx context.Context, filters types.VCFilters) (int, error) {
+	args := m.Called(ctx, filters)
+	return args.Int(0), args.Error(1)
+}
+
 // Workflow VC operations
 func (m *MockStorageProvider) StoreWorkflowVC(ctx context.Context, workflowVCID, workflowID, sessionID string, componentVCIDs []string, status string, startTime, endTime *time.Time, totalSteps, completedSteps int, storageURI string, documentSizeBytes int64) error {
 	args := m.Called(ctx, workflowVCID, workflowID, sessionID, componentVCIDs, status, startTime, endTime, totalSteps, completedSteps)

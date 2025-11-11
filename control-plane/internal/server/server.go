@@ -821,6 +821,10 @@ func (s *AgentFieldServer) setupRoutes() {
 				vc.GET("/:vcId/download", didHandler.DownloadVCHandler)
 				vc.POST("/verify", didHandler.VerifyVCHandler)
 			}
+
+			// Identity & Trust endpoints (DID Explorer and Credentials)
+			identityHandler := ui.NewIdentityHandlers(s.storage)
+			identityHandler.RegisterRoutes(uiAPI)
 		}
 
 		uiAPIV2 := s.Router.Group("/api/ui/v2")

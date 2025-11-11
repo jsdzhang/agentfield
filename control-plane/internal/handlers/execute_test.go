@@ -264,6 +264,9 @@ func (m *MockStorageProvider) GetExecutionVC(ctx context.Context, vcID string) (
 func (m *MockStorageProvider) ListExecutionVCs(ctx context.Context, filters types.VCFilters) ([]*types.ExecutionVCInfo, error) {
 	return nil, nil
 }
+func (m *MockStorageProvider) CountExecutionVCs(ctx context.Context, filters types.VCFilters) (int, error) {
+	return 0, nil
+}
 func (m *MockStorageProvider) StoreWorkflowVC(ctx context.Context, workflowVCID, workflowID, sessionID string, componentVCIDs []string, status string, startTime, endTime *time.Time, totalSteps, completedSteps int, storageURI string, documentSizeBytes int64) error {
 	return nil
 }

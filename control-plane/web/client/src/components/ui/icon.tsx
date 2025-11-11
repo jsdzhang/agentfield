@@ -13,6 +13,8 @@ import {
   Sun,
   Moon,
   Monitor,
+  ShieldCheck,
+  Identification,
 } from "@/components/ui/icon-bridge";
 import type { IconComponent, IconWeight } from "@/components/ui/icon-bridge";
 
@@ -30,6 +32,8 @@ const icons = {
   sun: Sun,
   moon: Moon,
   monitor: Monitor,
+  "shield-check": ShieldCheck,
+  identification: Identification,
 } as const;
 
 export interface IconProps {

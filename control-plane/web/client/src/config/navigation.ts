@@ -53,5 +53,25 @@ export const navigationSections: NavigationSection[] = [
         description: 'Multi-step workflow processes'
       }
     ]
+  },
+  {
+    id: 'identity-trust',
+    title: 'Identity & Trust',
+    items: [
+      {
+        id: 'did-explorer',
+        label: 'DID Explorer',
+        href: '/identity/dids',
+        icon: 'identification',
+        description: 'Explore decentralized identifiers for agents and reasoners'
+      },
+      {
+        id: 'credentials',
+        label: 'Credentials',
+        href: '/identity/credentials',
+        icon: 'shield-check',
+        description: 'View and verify execution credentials'
+      }
+    ]
   }
 ];

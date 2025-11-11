@@ -66,6 +66,8 @@ type ExecutionVC struct {
 	ExecutionID  string          `json:"execution_id" db:"execution_id"`
 	WorkflowID   string          `json:"workflow_id" db:"workflow_id"`
 	SessionID    string          `json:"session_id" db:"session_id"`
+	AgentNodeID  *string         `json:"agent_node_id,omitempty" db:"agent_node_id"`
+	WorkflowName *string         `json:"workflow_name,omitempty" db:"workflow_name"`
 	IssuerDID    string          `json:"issuer_did" db:"issuer_did"`
 	TargetDID    string          `json:"target_did" db:"target_did"`
 	CallerDID    string          `json:"caller_did" db:"caller_did"`
@@ -236,9 +238,11 @@ type VCFilters struct {
 	WorkflowID    *string    `json:"workflow_id,omitempty"`
 	SessionID     *string    `json:"session_id,omitempty"`
 	IssuerDID     *string    `json:"issuer_did,omitempty"`
+	AgentNodeID   *string    `json:"agent_node_id,omitempty"`
 	CallerDID     *string    `json:"caller_did,omitempty"`
 	TargetDID     *string    `json:"target_did,omitempty"`
 	Status        *string    `json:"status,omitempty"`
+	Search        *string    `json:"search,omitempty"`
 	CreatedAfter  *time.Time `json:"created_after,omitempty"`
 	CreatedBefore *time.Time `json:"created_before,omitempty"`
 	Limit         int        `json:"limit,omitempty"`
@@ -327,6 +331,8 @@ type ExecutionVCInfo struct {
 	ExecutionID  string    `json:"execution_id" db:"execution_id"`
 	WorkflowID   string    `json:"workflow_id" db:"workflow_id"`
 	SessionID    string    `json:"session_id" db:"session_id"`
+	AgentNodeID  *string   `json:"agent_node_id,omitempty" db:"agent_node_id"`
+	WorkflowName *string   `json:"workflow_name,omitempty" db:"workflow_name"`
 	IssuerDID    string    `json:"issuer_did" db:"issuer_did"`
 	TargetDID    string    `json:"target_did" db:"target_did"`
 	CallerDID    string    `json:"caller_did" db:"caller_did"`

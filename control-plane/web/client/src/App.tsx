@@ -18,6 +18,8 @@ import { PackagesPage } from "./pages/PackagesPage";
 import { ReasonerDetailPage } from "./pages/ReasonerDetailPage.tsx";
 import { WorkflowsPage } from "./pages/WorkflowsPage.tsx";
 import { WorkflowDeckGLTestPage } from "./pages/WorkflowDeckGLTestPage";
+import { DIDExplorerPage } from "./pages/DIDExplorerPage";
+import { CredentialsPage } from "./pages/CredentialsPage";
 
 // Placeholder pages for new routes
 
@@ -91,6 +93,8 @@ function AppContent() {
               <Route path="/packages" element={<div className="p-6 lg:p-8 min-h-full"><PackagesPage /></div>} />
               <Route path="/settings" element={<div className="p-6 lg:p-8 min-h-full"><SettingsPage /></div>} />
               <Route path="/agents" element={<div className="p-6 lg:p-8 min-h-full"><AgentsPage /></div>} />
+              <Route path="/identity/dids" element={<div className="p-6 lg:p-8 min-h-full"><DIDExplorerPage /></div>} />
+              <Route path="/identity/credentials" element={<div className="p-6 lg:p-8 min-h-full"><CredentialsPage /></div>} />
               <Route path="/test/deckgl" element={<div className="p-6 lg:p-8 min-h-full"><WorkflowDeckGLTestPage /></div>} />
             </Routes>
           </main>

@@ -554,6 +554,8 @@ table td,
     --bg-overlay: color-mix(in oklch, var(--background) 82%, var(--foreground) 18%);
     --bg-hover: color-mix(in oklch, var(--background) 78%, var(--foreground) 22%);
     --bg-active: color-mix(in oklch, var(--background) 70%, var(--foreground) 30%);
+    --row-hover-bg: color-mix(in oklch, var(--foreground) 18%, var(--background) 82%);
+    --dark-row-hover-bg: color-mix(in oklch, var(--foreground) 12%, var(--background) 88%);
 
     --text-primary: var(--foreground);
     --text-secondary: var(--muted-foreground);
@@ -667,6 +669,8 @@ table td,
     --bg-overlay: color-mix(in oklch, var(--background) 70%, var(--foreground) 30%);
     --bg-hover: color-mix(in oklch, var(--background) 66%, var(--foreground) 34%);
     --bg-active: color-mix(in oklch, var(--background) 62%, var(--foreground) 38%);
+    --row-hover-bg: color-mix(in oklch, var(--foreground) 28%, var(--background) 72%);
+    --dark-row-hover-bg: color-mix(in oklch, var(--foreground) 36%, var(--background) 64%);
 
     --text-primary: var(--foreground);
     --text-secondary: var(--muted-foreground);

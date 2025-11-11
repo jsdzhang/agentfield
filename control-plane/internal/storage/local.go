@@ -6130,12 +6130,25 @@ func (ls *LocalStorage) ListComponentDIDs(ctx context.Context, agentDID string) 
 		return nil, fmt.Errorf("context cancelled during list component DIDs: %w", err)
 	}
 
-	query := `
-		SELECT function_name, did, agent_did, component_type, function_name,
-			   derivation_path, created_at
-		FROM component_dids WHERE agent_did = ? ORDER BY created_at DESC`
+	var query string
+	var rows *sql.Rows
+	var err error
 
-	rows, err := ls.db.QueryContext(ctx, query, agentDID)
+	if agentDID == "" {
+		// Get all components when agentDID is empty
+		query = `
+			SELECT function_name, did, agent_did, component_type, function_name,
+				   derivation_path, created_at
+			FROM component_dids ORDER BY created_at DESC`
+		rows, err = ls.db.QueryContext(ctx, query)
+	} else {
+		// Get components for specific agent
+		query = `
+			SELECT function_name, did, agent_did, component_type, function_name,
+				   derivation_path, created_at
+			FROM component_dids WHERE agent_did = ? ORDER BY created_at DESC`
+		rows, err = ls.db.QueryContext(ctx, query, agentDID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to list component DIDs: %w", err)
 	}
@@ -6232,6 +6245,75 @@ func (ls *LocalStorage) GetExecutionVC(ctx context.Context, vcID string) (*types
 	return info, nil
 }
 
+func buildExecutionVCFilterClauses(filters types.VCFilters) (string, []interface{}) {
+	var (
+		conditions []string
+		args       []interface{}
+	)
+
+	if filters.ExecutionID != nil {
+		conditions = append(conditions, "evc.execution_id = ?")
+		args = append(args, *filters.ExecutionID)
+	}
+	if filters.WorkflowID != nil {
+		conditions = append(conditions, "evc.workflow_id = ?")
+		args = append(args, *filters.WorkflowID)
+	}
+	if filters.SessionID != nil {
+		conditions = append(conditions, "evc.session_id = ?")
+		args = append(args, *filters.SessionID)
+	}
+	if filters.IssuerDID != nil {
+		conditions = append(conditions, "evc.issuer_did = ?")
+		args = append(args, *filters.IssuerDID)
+	}
+	if filters.TargetDID != nil {
+		conditions = append(conditions, "evc.target_did = ?")
+		args = append(args, *filters.TargetDID)
+	}
+	if filters.CallerDID != nil {
+		conditions = append(conditions, "evc.caller_did = ?")
+		args = append(args, *filters.CallerDID)
+	}
+	if filters.AgentNodeID != nil {
+		conditions = append(conditions, "COALESCE(we.agent_node_id, '') = ?")
+		args = append(args, *filters.AgentNodeID)
+	}
+	if filters.Status != nil {
+		conditions = append(conditions, "evc.status = ?")
+		args = append(args, *filters.Status)
+	}
+	if filters.CreatedAfter != nil {
+		conditions = append(conditions, "evc.created_at >= ?")
+		args = append(args, filters.CreatedAfter.UTC())
+	}
+	if filters.CreatedBefore != nil {
+		conditions = append(conditions, "evc.created_at <= ?")
+		args = append(args, filters.CreatedBefore.UTC())
+	}
+
+	if filters.Search != nil {
+		if trimmed := strings.TrimSpace(*filters.Search); trimmed != "" {
+			search := "%" + strings.ToLower(trimmed) + "%"
+			conditions = append(conditions, "("+
+				"LOWER(evc.execution_id) LIKE ? OR "+
+				"LOWER(evc.workflow_id) LIKE ? OR "+
+				"LOWER(evc.issuer_did) LIKE ? OR "+
+				"LOWER(evc.target_did) LIKE ? OR "+
+				"LOWER(evc.caller_did) LIKE ? OR "+
+				"LOWER(evc.session_id) LIKE ? OR "+
+				"LOWER(COALESCE(we.agent_node_id, '')) LIKE ? OR "+
+				"LOWER(COALESCE(we.workflow_name, '')) LIKE ?"+
+				")")
+			for i := 0; i < 8; i++ {
+				args = append(args, search)
+			}
+		}
+	}
+
+	return strings.Join(conditions, " AND "), args
+}
+
 func (ls *LocalStorage) ListExecutionVCs(ctx context.Context, filters types.VCFilters) ([]*types.ExecutionVCInfo, error) {
 	// Check context cancellation early
 	if err := ctx.Err(); err != nil {
@@ -6239,37 +6321,26 @@ func (ls *LocalStorage) ListExecutionVCs(ctx context.Context, filters types.VCFi
 	}
 
 	query := `
-		SELECT vc_id, execution_id, workflow_id, session_id, issuer_did, target_did,
-			   caller_did, input_hash, output_hash, status, created_at, storage_uri, document_size_bytes
-		FROM execution_vcs`
+		SELECT evc.vc_id, evc.execution_id, evc.workflow_id, evc.session_id,
+		       evc.issuer_did, evc.target_did, evc.caller_did, evc.input_hash,
+		       evc.output_hash, evc.status, evc.created_at, evc.storage_uri,
+		       evc.document_size_bytes, we.agent_node_id, we.workflow_name
+		FROM execution_vcs evc
+		LEFT JOIN workflow_executions we ON we.execution_id = evc.execution_id`
 
-	var conditions []string
-	var args []interface{}
-
-	if filters.WorkflowID != nil {
-		conditions = append(conditions, "workflow_id = ?")
-		args = append(args, *filters.WorkflowID)
-	}
-	if filters.SessionID != nil {
-		conditions = append(conditions, "session_id = ?")
-		args = append(args, *filters.SessionID)
-	}
-	if filters.IssuerDID != nil {
-		conditions = append(conditions, "issuer_did = ?")
-		args = append(args, *filters.IssuerDID)
-	}
-	if filters.Status != nil {
-		conditions = append(conditions, "status = ?")
-		args = append(args, *filters.Status)
+	whereClause, args := buildExecutionVCFilterClauses(filters)
+	if whereClause != "" {
+		query += " WHERE " + whereClause
 	}
 
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-	query += " ORDER BY created_at DESC"
+	query += " ORDER BY evc.created_at DESC"
 
 	if filters.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", filters.Limit)
+	}
+
+	if filters.Offset > 0 {
+		query += fmt.Sprintf(" OFFSET %d", filters.Offset)
 	}
 
 	rows, err := ls.db.QueryContext(ctx, query, args...)
@@ -6288,13 +6359,36 @@ func (ls *LocalStorage) ListExecutionVCs(ctx context.Context, filters types.VCFi
 		info := &types.ExecutionVCInfo{}
 		err := rows.Scan(&info.VCID, &info.ExecutionID, &info.WorkflowID, &info.SessionID,
 			&info.IssuerDID, &info.TargetDID, &info.CallerDID, &info.InputHash,
-			&info.OutputHash, &info.Status, &info.CreatedAt, &info.StorageURI, &info.DocumentSize)
+			&info.OutputHash, &info.Status, &info.CreatedAt, &info.StorageURI,
+			&info.DocumentSize, &info.AgentNodeID, &info.WorkflowName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan execution VC: %w", err)
 		}
 		infos = append(infos, info)
 	}
 	return infos, nil
+}
+
+func (ls *LocalStorage) CountExecutionVCs(ctx context.Context, filters types.VCFilters) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, fmt.Errorf("context cancelled during count execution VCs: %w", err)
+	}
+
+	query := `
+		SELECT COUNT(*)
+		FROM execution_vcs evc
+		LEFT JOIN workflow_executions we ON we.execution_id = evc.execution_id`
+
+	whereClause, args := buildExecutionVCFilterClauses(filters)
+	if whereClause != "" {
+		query += " WHERE " + whereClause
+	}
+
+	var total int
+	if err := ls.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("failed to count execution VCs: %w", err)
+	}
+	return total, nil
 }
 
 // Workflow VC operations

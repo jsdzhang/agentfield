@@ -52,6 +52,9 @@ export function TopNavigation() {
         href: "/dashboard/enhanced",
         parent: "dashboard",
       },
+      identity: { label: "Identity & Trust", href: "/identity/dids" },
+      "identity/dids": { label: "DID Explorer", href: "/identity/dids" },
+      "identity/credentials": { label: "Credentials", href: "/identity/credentials" },
     };
 
     let currentPath = "";

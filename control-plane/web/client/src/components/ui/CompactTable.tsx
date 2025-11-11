@@ -403,9 +403,10 @@ export function CompactTable<T>({
                 >
                   <div
                     className={cn(
-                      "grid h-full items-center content-center px-4 transition-all duration-200 border-l-2 border-transparent",
-                      "hover:bg-muted/30 hover:border-l-accent-primary/40",
-                      hasRowClick && "cursor-pointer"
+                      "grid h-full items-center content-center px-4 transition-colors duration-150 border-l-2 border-transparent foundation-transition",
+                      "hover:bg-[var(--row-hover-bg)] dark:hover:bg-[var(--dark-row-hover-bg)] hover:border-l-muted-foreground/30",
+                      hasRowClick &&
+                        "cursor-pointer active:bg-[var(--bg-active)] dark:active:bg-[var(--dark-row-hover-bg)]"
                     )}
                     style={{ gridTemplateColumns: resolvedGridTemplate }}
                     onMouseEnter={() => setHoveredRow(rowKey)}

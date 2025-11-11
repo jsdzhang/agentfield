@@ -66,6 +66,19 @@ cd agentfield && docker compose up
 
 Your control plane is running at `http://localhost:8080`
 
+<details>
+<summary><code>export AGENT_CALLBACK_URL="http://host.docker.internal:8001"</code></summary>
+
+**Heads-up:** When your agent nodes run outside the Docker network (local shell, another VM, etc.) they can't be reached through `localhost`. Before starting any agent, set a callback URL that the control plane can dial:
+
+```bash
+export AGENT_CALLBACK_URL="http://host.docker.internal:8001"
+```
+
+Replace `host.docker.internal` with whatever host/IP the control plane can reach if you're on Linux or a remote machine.
+
+</details>
+
 **[📚 Full quickstart guide →](https://agentfield.ai/docs/quick-start)**
 
 ```python

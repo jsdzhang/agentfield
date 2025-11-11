@@ -17,6 +17,9 @@ services:
       context: ../..
       dockerfile: deployments/docker/Dockerfile.control-plane
     environment:
+      AGENTFIELD_STORAGE_MODE: postgres
+      AGENTFIELD_POSTGRES_URL: postgres://agentfield:agentfield@postgres:5432/agentfield?sslmode=disable
+      AGENTFIELD_STORAGE_POSTGRES_URL: postgres://agentfield:agentfield@postgres:5432/agentfield?sslmode=disable
       AGENTFIELD_DATABASE_URL: postgres://agentfield:agentfield@postgres:5432/agentfield?sslmode=disable
       AGENTFIELD_HTTP_ADDR: 0.0.0.0:8080
     ports:

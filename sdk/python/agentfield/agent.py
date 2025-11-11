@@ -8,10 +8,11 @@ import time
 import urllib.parse
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import wraps
 from typing import (
     Any,
+    Awaitable,
     Callable,
     List,
     Optional,
@@ -45,6 +46,8 @@ from agentfield.async_config import AsyncConfig
 from agentfield.async_execution_manager import AsyncExecutionManager
 from agentfield.pydantic_utils import convert_function_args, should_convert_args
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import create_model, BaseModel, ValidationError
 
 # Import aiohttp for fire-and-forget HTTP calls
@@ -1068,178 +1071,34 @@ class Agent(FastAPI):
             # Create FastAPI endpoint
             @self.post(endpoint_path, response_model=return_type)
             async def endpoint(input_data: InputSchema, request: Request):
-                import asyncio
-                import time
-                from agentfield.execution_context import (
-                    set_execution_context,
-                    reset_execution_context,
-                )
-
-                # Extract execution context from request headers
-                execution_context = ExecutionContext.from_request(request, self.node_id)
-                payload_dict = input_data.model_dump()
-
-                # 🔥 CRITICAL FIX: Synchronize BOTH context systems
-                self._current_execution_context = execution_context  # Agent-level
-                context_token = set_execution_context(execution_context)  # Thread-local
-
-                # Set this agent as current for MCP skills
-                self._set_as_current()
-
-                # 🔥 NEW: Send workflow update for parent execution context
-                # This ensures the parent node appears in the workflow DAG
-                if hasattr(self, "workflow_handler") and self.workflow_handler:
-                    # Update reasoner name in context
-                    execution_context.reasoner_name = reasoner_id
-
-                    # Send start notification for the parent execution synchronously so ordering is preserved
-                    await self.workflow_handler.notify_call_start(
-                        execution_context.execution_id,
-                        execution_context,
-                        reasoner_id,
-                        payload_dict,
-                        parent_execution_id=execution_context.parent_execution_id,
+                async def run_reasoner() -> Any:
+                    return await self._execute_reasoner_endpoint(
+                        reasoner_id=reasoner_id,
+                        func=func,
+                        signature=sig,
+                        input_model=input_data,
+                        request=request,
                     )
 
-                start_time = time.time()
-
-                # Create DID execution context if DID system is enabled
-                did_execution_context = None
-                if self.did_enabled and self.did_manager:
-                    did_execution_context = self.did_manager.create_execution_context(
-                        execution_context.execution_id,
-                        execution_context.workflow_id,
-                        execution_context.workflow_id,  # Use workflow_id as session_id for now
-                        "agent",  # caller function
-                        reasoner_id,  # target function
+                execution_id_header = request.headers.get("X-Execution-ID")
+                if execution_id_header and self.agentfield_server:
+                    asyncio.create_task(
+                        self._execute_async_with_callback(
+                            reasoner_coro=run_reasoner,
+                            execution_id=execution_id_header,
+                            reasoner_name=reasoner_id,
+                        )
                     )
-                    # Populate execution context with DID information
-                    self._populate_execution_context_with_did(
-                        execution_context, did_execution_context
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "status": "processing",
+                            "execution_id": execution_id_header,
+                        },
                     )
 
-                try:
-                    # 🔥 NEW: Convert input to function arguments with automatic Pydantic model conversion
-                    # This ensures FastAPI-like behavior for reasoner endpoints
-                    try:
-                        if should_convert_args(func):
-                            # Use our conversion utility to convert dict arguments to Pydantic models
-                            converted_args, converted_kwargs = convert_function_args(
-                                func, (), payload_dict
-                            )
-                            args = converted_args
-                            kwargs = converted_kwargs
-                        else:
-                            # No Pydantic models detected, use original behavior
-                            args = ()
-                            kwargs = payload_dict
-                    except ValidationError as e:
-                        # Re-raise validation errors with context
-                        raise ValidationError(
-                            f"Pydantic validation failed for reasoner '{reasoner_id}': {e}",
-                            model=getattr(e, "model", None),
-                        ) from e
-                    except Exception as e:
-                        # Log conversion errors but continue with original args for backward compatibility
-                        if self.dev_mode:
-                            log_debug(
-                                f"⚠️ Warning: Failed to convert arguments for {reasoner_id}: {e}"
-                            )
-                        args = ()
-                        kwargs = payload_dict
+                return await run_reasoner()
 
-                    # Inject execution context if the function accepts it
-                    if "execution_context" in sig.parameters:
-                        kwargs["execution_context"] = execution_context
-
-                    # Call the original function
-                    if asyncio.iscoroutinefunction(func):
-                        result = await func(*args, **kwargs)
-                    else:
-                        result = func(*args, **kwargs)
-
-                    # Generate VC asynchronously if DID is enabled
-                    if self.did_enabled and self.vc_generator and did_execution_context:
-                        if self.dev_mode:
-                            log_debug(
-                                f"Triggering VC generation for execution: {did_execution_context.execution_id}"
-                            )
-                        end_time = time.time()
-                        duration_ms = int((end_time - start_time) * 1000)
-                        asyncio.create_task(
-                            self._generate_vc_async(
-                                self.vc_generator,
-                                did_execution_context,
-                                reasoner_id,
-                                payload_dict,
-                                result,
-                                "success",
-                                None,
-                                duration_ms,
-                            )
-                        )
-
-                    # 🔥 NEW: Send completion notification for parent execution
-                    if hasattr(self, "workflow_handler") and self.workflow_handler:
-                        end_time = time.time()
-                        await self.workflow_handler.notify_call_complete(
-                            execution_context.execution_id,
-                            execution_context.workflow_id,
-                            result,
-                            int((end_time - start_time) * 1000),
-                            execution_context,  # 🔥 FIX: Pass execution_context to get parent_workflow_id
-                            input_data=payload_dict,  # 🔧 FIX: Pass actual input data
-                            parent_execution_id=execution_context.parent_execution_id,
-                        )
-
-                    return result
-                except asyncio.CancelledError as cancel_err:
-                    if hasattr(self, "workflow_handler") and self.workflow_handler:
-                        end_time = time.time()
-                        await self.workflow_handler.notify_call_error(
-                            execution_context.execution_id,
-                            execution_context.workflow_id,
-                            "Execution cancelled by upstream client",
-                            int((end_time - start_time) * 1000),
-                            execution_context,
-                            input_data=payload_dict,
-                            parent_execution_id=execution_context.parent_execution_id,
-                        )
-                    raise cancel_err
-                except HTTPException as http_exc:
-                    if hasattr(self, "workflow_handler") and self.workflow_handler:
-                        end_time = time.time()
-                        detail = getattr(http_exc, "detail", None) or str(http_exc)
-                        await self.workflow_handler.notify_call_error(
-                            execution_context.execution_id,
-                            execution_context.workflow_id,
-                            detail,
-                            int((end_time - start_time) * 1000),
-                            execution_context,
-                            input_data=payload_dict,
-                            parent_execution_id=execution_context.parent_execution_id,
-                        )
-                    raise
-                except Exception as e:
-                    # 🔥 NEW: Send error notification for parent execution
-                    if hasattr(self, "workflow_handler") and self.workflow_handler:
-                        end_time = time.time()
-                        await self.workflow_handler.notify_call_error(
-                            execution_context.execution_id,
-                            execution_context.workflow_id,
-                            str(e),
-                            int((end_time - start_time) * 1000),
-                            execution_context,  # 🔥 FIX: Pass execution_context to get parent_workflow_id
-                            input_data=payload_dict,  # 🔧 FIX: Pass actual input data
-                            parent_execution_id=execution_context.parent_execution_id,
-                        )
-                    raise
-                finally:
-                    # 🔥 CRITICAL: Clean up both contexts
-                    reset_execution_context(context_token)  # Thread-local cleanup
-                    self._current_execution_context = None  # Agent-level cleanup
-                    # Clear current agent after execution
-                    self._clear_current()
 
             # 🔥 ENHANCED: Comprehensive function replacement for unified tracking
             original_func = func
@@ -1308,6 +1167,245 @@ class Agent(FastAPI):
             return tracked_func
 
         return decorator
+
+    async def _execute_reasoner_endpoint(
+        self,
+        *,
+        reasoner_id: str,
+        func: Callable,
+        signature: inspect.Signature,
+        input_model: BaseModel,
+        request: Request,
+    ) -> Any:
+        import asyncio
+        import time
+        from agentfield.execution_context import (
+            set_execution_context,
+            reset_execution_context,
+        )
+
+        execution_context = ExecutionContext.from_request(request, self.node_id)
+        payload_dict = input_model.model_dump()
+
+        self._current_execution_context = execution_context
+        context_token = set_execution_context(execution_context)
+        self._set_as_current()
+
+        if hasattr(self, "workflow_handler") and self.workflow_handler:
+            execution_context.reasoner_name = reasoner_id
+            await self.workflow_handler.notify_call_start(
+                execution_context.execution_id,
+                execution_context,
+                reasoner_id,
+                payload_dict,
+                parent_execution_id=execution_context.parent_execution_id,
+            )
+
+        start_time = time.time()
+
+        did_execution_context = None
+        if self.did_enabled and self.did_manager:
+            did_execution_context = self.did_manager.create_execution_context(
+                execution_context.execution_id,
+                execution_context.workflow_id,
+                execution_context.workflow_id,
+                "agent",
+                reasoner_id,
+            )
+            self._populate_execution_context_with_did(
+                execution_context, did_execution_context
+            )
+
+        try:
+            try:
+                if should_convert_args(func):
+                    converted_args, converted_kwargs = convert_function_args(
+                        func, (), payload_dict
+                    )
+                    args = converted_args
+                    kwargs = converted_kwargs
+                else:
+                    args, kwargs = (), payload_dict
+            except ValidationError as exc:
+                raise ValidationError(
+                    f"Pydantic validation failed for reasoner '{reasoner_id}': {exc}",
+                    model=getattr(exc, "model", None),
+                ) from exc
+            except Exception as exc:  # pragma: no cover - best effort log
+                if self.dev_mode:
+                    log_debug(
+                        f"⚠️ Warning: Failed to convert arguments for {reasoner_id}: {exc}"
+                    )
+                args, kwargs = (), payload_dict
+
+            if "execution_context" in signature.parameters:
+                kwargs["execution_context"] = execution_context
+
+            if asyncio.iscoroutinefunction(func):
+                result = await func(*args, **kwargs)
+            else:
+                result = func(*args, **kwargs)
+
+            if self.did_enabled and self.vc_generator and did_execution_context:
+                if self.dev_mode:
+                    log_debug(
+                        f"Triggering VC generation for execution: {did_execution_context.execution_id}"
+                    )
+                end_time = time.time()
+                duration_ms = int((end_time - start_time) * 1000)
+                asyncio.create_task(
+                    self._generate_vc_async(
+                        self.vc_generator,
+                        did_execution_context,
+                        reasoner_id,
+                        payload_dict,
+                        result,
+                        "success",
+                        None,
+                        duration_ms,
+                    )
+                )
+
+            if hasattr(self, "workflow_handler") and self.workflow_handler:
+                end_time = time.time()
+                await self.workflow_handler.notify_call_complete(
+                    execution_context.execution_id,
+                    execution_context.workflow_id,
+                    result,
+                    int((end_time - start_time) * 1000),
+                    execution_context,
+                    input_data=payload_dict,
+                    parent_execution_id=execution_context.parent_execution_id,
+                )
+
+            return result
+        except asyncio.CancelledError as cancel_err:
+            if hasattr(self, "workflow_handler") and self.workflow_handler:
+                end_time = time.time()
+                await self.workflow_handler.notify_call_error(
+                    execution_context.execution_id,
+                    execution_context.workflow_id,
+                    "Execution cancelled by upstream client",
+                    int((end_time - start_time) * 1000),
+                    execution_context,
+                    input_data=payload_dict,
+                    parent_execution_id=execution_context.parent_execution_id,
+                )
+            raise cancel_err
+        except HTTPException as http_exc:
+            if hasattr(self, "workflow_handler") and self.workflow_handler:
+                end_time = time.time()
+                detail = getattr(http_exc, "detail", None) or str(http_exc)
+                await self.workflow_handler.notify_call_error(
+                    execution_context.execution_id,
+                    execution_context.workflow_id,
+                    detail,
+                    int((end_time - start_time) * 1000),
+                    execution_context,
+                    input_data=payload_dict,
+                    parent_execution_id=execution_context.parent_execution_id,
+                )
+            raise
+        except Exception as exc:
+            if hasattr(self, "workflow_handler") and self.workflow_handler:
+                end_time = time.time()
+                await self.workflow_handler.notify_call_error(
+                    execution_context.execution_id,
+                    execution_context.workflow_id,
+                    str(exc),
+                    int((end_time - start_time) * 1000),
+                    execution_context,
+                    input_data=payload_dict,
+                    parent_execution_id=execution_context.parent_execution_id,
+                )
+            raise
+        finally:
+            reset_execution_context(context_token)
+            self._current_execution_context = None
+            self._clear_current()
+
+    async def _execute_async_with_callback(
+        self,
+        *,
+        reasoner_coro: Callable[[], Awaitable[Any]],
+        execution_id: str,
+        reasoner_name: str,
+    ) -> None:
+        if not execution_id:
+            return
+        callback_url = self._build_execution_callback_url(execution_id)
+        if not callback_url:
+            log_warn("Unable to construct callback URL for execution updates")
+            return
+
+        start_time = time.time()
+        try:
+            result = await reasoner_coro()
+            payload = {
+                "status": "succeeded",
+                "result": jsonable_encoder(result),
+                "duration_ms": int((time.time() - start_time) * 1000),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "execution_id": execution_id,
+                "reasoner": reasoner_name,
+            }
+            log_info(f"Execution {execution_id} completed asynchronously")
+        except Exception as exc:
+            payload = {
+                "status": "failed",
+                "error": str(exc),
+                "duration_ms": int((time.time() - start_time) * 1000),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "execution_id": execution_id,
+                "reasoner": reasoner_name,
+            }
+            log_error(f"Execution {execution_id} failed asynchronously: {exc}")
+        await self._post_execution_status(callback_url, payload, execution_id)
+
+    async def _post_execution_status(
+        self,
+        callback_url: str,
+        payload: Dict[str, Any],
+        execution_id: str,
+        max_retries: int = 5,
+    ) -> None:
+        if not self.client:
+            log_error("AgentField client unavailable; cannot send status updates")
+            return
+
+        safe_payload = jsonable_encoder(payload)
+        for attempt in range(max_retries):
+            try:
+                response = await self.client._async_request(
+                    "POST",
+                    callback_url,
+                    json=safe_payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                if 200 <= response.status_code < 300:
+                    if self.dev_mode:
+                        log_debug(
+                            f"Sent async status update for {execution_id} (attempt {attempt + 1})"
+                        )
+                    return
+                log_warn(
+                    f"Async status update failed with {response.status_code} for execution {execution_id}"
+                )
+            except Exception as exc:  # pragma: no cover - network errors
+                log_warn(
+                    f"Async status update attempt {attempt + 1} failed for {execution_id}: {exc}"
+                )
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2**attempt)
+        log_error(f"Failed to deliver async status for {execution_id} after retries")
+
+    def _build_execution_callback_url(self, execution_id: str) -> Optional[str]:
+        if not self.agentfield_server or not execution_id:
+            return None
+        return (
+            self.agentfield_server.rstrip("/")
+            + f"/api/v1/executions/{execution_id}/status"
+        )
 
     def on_change(self, pattern: Union[str, List[str]]):
         """

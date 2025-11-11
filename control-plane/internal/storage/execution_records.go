@@ -447,8 +447,8 @@ func (ls *LocalStorage) getRunAggregation(ctx context.Context, runID string) (*R
 			Str("run_id", runID).
 			Interface("value", earliestVal).
 			Err(err).
-			Msg("failed to parse earliest_started for run summary; defaulting to zero value")
-		summary.EarliestStarted = time.Time{}
+			Msg("failed to parse earliest_started for run summary; using current time as fallback")
+		summary.EarliestStarted = time.Now().UTC()
 	}
 
 	if err := assignTimeValue(&summary.LatestStarted, latestVal); err != nil {
@@ -456,8 +456,8 @@ func (ls *LocalStorage) getRunAggregation(ctx context.Context, runID string) (*R
 			Str("run_id", runID).
 			Interface("value", latestVal).
 			Err(err).
-			Msg("failed to parse latest_started for run summary; defaulting to zero value")
-		summary.LatestStarted = time.Time{}
+			Msg("failed to parse latest_started for run summary; using current time as fallback")
+		summary.LatestStarted = time.Now().UTC()
 	}
 
 	// Query 2: Get status counts

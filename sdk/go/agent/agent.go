@@ -10,6 +10,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -182,6 +183,17 @@ func executionContextFrom(ctx context.Context) ExecutionContext {
 
 func generateRunID() string {
 	return fmt.Sprintf("run_%d_%06d", time.Now().UnixNano(), rand.Intn(1_000_000))
+}
+
+func cloneInputMap(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	copied := make(map[string]any, len(input))
+	for k, v := range input {
+		copied[k] = v
+	}
+	return copied
 }
 
 // RegisterReasoner makes a handler available at /reasoners/{name}.
@@ -386,6 +398,17 @@ func (a *Agent) handleReasoner(w http.ResponseWriter, r *http.Request) {
 
 	ctx := contextWithExecution(r.Context(), execCtx)
 
+	if execCtx.ExecutionID != "" && strings.TrimSpace(a.cfg.AgentFieldURL) != "" {
+		go a.executeReasonerAsync(reasoner, cloneInputMap(input), execCtx)
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"status":        "processing",
+			"execution_id":  execCtx.ExecutionID,
+			"run_id":        execCtx.RunID,
+			"reasoner_name": name,
+		})
+		return
+	}
+
 	result, err := reasoner.Handler(ctx, input)
 	if err != nil {
 		a.logger.Printf("reasoner %s failed: %v", name, err)
@@ -397,6 +420,94 @@ func (a *Agent) handleReasoner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (a *Agent) executeReasonerAsync(reasoner *Reasoner, input map[string]any, execCtx ExecutionContext) {
+	ctx := contextWithExecution(context.Background(), execCtx)
+	start := time.Now()
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			errMsg := fmt.Sprintf("panic: %v", rec)
+			payload := map[string]any{
+				"status":        "failed",
+				"error":         errMsg,
+				"execution_id":  execCtx.ExecutionID,
+				"run_id":        execCtx.RunID,
+				"completed_at":  time.Now().UTC().Format(time.RFC3339),
+				"duration_ms":   time.Since(start).Milliseconds(),
+				"reasoner_name": reasoner.Name,
+			}
+			if err := a.sendExecutionStatus(execCtx.ExecutionID, payload); err != nil {
+				a.logger.Printf("failed to send panic status: %v", err)
+			}
+		}
+	}()
+
+	result, err := reasoner.Handler(ctx, input)
+	payload := map[string]any{
+		"execution_id":  execCtx.ExecutionID,
+		"run_id":        execCtx.RunID,
+		"completed_at":  time.Now().UTC().Format(time.RFC3339),
+		"duration_ms":   time.Since(start).Milliseconds(),
+		"reasoner_name": reasoner.Name,
+	}
+
+	if err != nil {
+		payload["status"] = "failed"
+		payload["error"] = err.Error()
+	} else {
+		payload["status"] = "succeeded"
+		payload["result"] = result
+	}
+
+	if err := a.sendExecutionStatus(execCtx.ExecutionID, payload); err != nil {
+		a.logger.Printf("async status update failed: %v", err)
+	}
+}
+
+func (a *Agent) sendExecutionStatus(executionID string, payload map[string]any) error {
+	base := strings.TrimSpace(a.cfg.AgentFieldURL)
+	if executionID == "" || base == "" {
+		return fmt.Errorf("missing execution id or AgentField URL")
+	}
+	callbackURL := strings.TrimSuffix(base, "/") + "/api/v1/executions/" + url.PathEscape(executionID) + "/status"
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode status payload: %w", err)
+	}
+	return a.postExecutionStatus(context.Background(), callbackURL, payloadBytes)
+}
+
+func (a *Agent) postExecutionStatus(ctx context.Context, callbackURL string, payload []byte) error {
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, callbackURL, bytes.NewReader(payload))
+		if err != nil {
+			cancel()
+			return fmt.Errorf("create status request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := a.httpClient.Do(req)
+		if err != nil {
+			lastErr = err
+		} else {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				cancel()
+				return nil
+			}
+			lastErr = fmt.Errorf("status update returned %d", resp.StatusCode)
+		}
+		cancel()
+		if attempt < 4 {
+			time.Sleep(time.Second << attempt)
+		}
+	}
+	return lastErr
 }
 
 // Call invokes another reasoner via the AgentField control plane, preserving execution context.

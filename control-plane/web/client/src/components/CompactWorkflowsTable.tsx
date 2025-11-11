@@ -46,7 +46,19 @@ function RelativeTime({ timestamp }: { timestamp: string }) {
   const getRelativeTime = (value: string) => {
     const now = new Date();
     const time = new Date(value);
+
+    // Validate the parsed time
+    if (isNaN(time.getTime()) || time.getFullYear() < 1970) {
+      return "invalid date";
+    }
+
     const diffMs = now.getTime() - time.getTime();
+
+    // Handle future dates or negative differences
+    if (diffMs < 0) {
+      return "just now";
+    }
+
     const diffMins = Math.floor(diffMs / (1000 * 60));
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -54,6 +66,7 @@ function RelativeTime({ timestamp }: { timestamp: string }) {
     if (diffMins < 1) return "now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays > 365) return `${Math.floor(diffDays / 365)}y ago`;
     return `${diffDays}d ago`;
   };
 

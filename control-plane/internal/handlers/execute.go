@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Agent-Field/agentfield/control-plane/internal/events"
 	"github.com/Agent-Field/agentfield/control-plane/internal/logger"
 	"github.com/Agent-Field/agentfield/control-plane/internal/services"
 	"github.com/Agent-Field/agentfield/control-plane/internal/utils"
@@ -35,6 +36,7 @@ type ExecutionStore interface {
 	StoreWorkflowExecution(ctx context.Context, execution *types.WorkflowExecution) error
 	UpdateWorkflowExecution(ctx context.Context, executionID string, updateFunc func(*types.WorkflowExecution) (*types.WorkflowExecution, error)) error
 	GetWorkflowExecution(ctx context.Context, executionID string) (*types.WorkflowExecution, error)
+	GetExecutionEventBus() *events.ExecutionEventBus
 }
 
 // ExecuteRequest represents an execution request from an agent client.
@@ -99,11 +101,21 @@ type BatchStatusRequest struct {
 // BatchStatusResponse is the batched counterpart to ExecutionStatusResponse.
 type BatchStatusResponse map[string]ExecutionStatusResponse
 
+type executionStatusUpdateRequest struct {
+	Status      string                 `json:"status" binding:"required"`
+	Result      map[string]interface{} `json:"result,omitempty"`
+	Error       string                 `json:"error,omitempty"`
+	DurationMS  *int64                 `json:"duration_ms,omitempty"`
+	CompletedAt *time.Time             `json:"completed_at,omitempty"`
+	Progress    *int                   `json:"progress,omitempty"`
+}
+
 type executionController struct {
 	store      ExecutionStore
 	httpClient *http.Client
 	payloads   services.PayloadStore
 	webhooks   services.WebhookDispatcher
+	eventBus   *events.ExecutionEventBus
 }
 
 type asyncExecutionJob struct {
@@ -162,6 +174,12 @@ func BatchExecutionStatusHandler(store ExecutionStore) gin.HandlerFunc {
 	return controller.handleBatchStatus
 }
 
+// UpdateExecutionStatusHandler ingests status callbacks from agent nodes.
+func UpdateExecutionStatusHandler(store ExecutionStore, payloads services.PayloadStore, webhooks services.WebhookDispatcher) gin.HandlerFunc {
+	controller := newExecutionController(store, payloads, webhooks)
+	return controller.handleStatusUpdate
+}
+
 func newExecutionController(store ExecutionStore, payloads services.PayloadStore, webhooks services.WebhookDispatcher) *executionController {
 	return &executionController{
 		store: store,
@@ -170,6 +188,7 @@ func newExecutionController(store ExecutionStore, payloads services.PayloadStore
 		},
 		payloads: payloads,
 		webhooks: webhooks,
+		eventBus: store.GetExecutionEventBus(),
 	}
 }
 
@@ -181,7 +200,7 @@ func (c *executionController) handleSync(ctx *gin.Context) {
 		return
 	}
 
-	resultBody, elapsed, callErr := c.callAgent(reqCtx, plan)
+	resultBody, elapsed, asyncAccepted, callErr := c.callAgent(reqCtx, plan)
 	job := completionJob{
 		controller: c,
 		plan:       plan,
@@ -189,6 +208,26 @@ func (c *executionController) handleSync(ctx *gin.Context) {
 		elapsed:    elapsed,
 		callErr:    callErr,
 		done:       make(chan error, 1),
+	}
+	if callErr == nil && asyncAccepted {
+		response := AsyncExecuteResponse{
+			ExecutionID:       plan.exec.ExecutionID,
+			RunID:             plan.exec.RunID,
+			WorkflowID:        plan.exec.RunID,
+			Status:            string(types.ExecutionStatusRunning),
+			Target:            fmt.Sprintf("%s.%s", plan.target.NodeID, plan.target.TargetName),
+			Type:              plan.targetType,
+			CreatedAt:         plan.exec.CreatedAt.UTC().Format(time.RFC3339),
+			EnqueuedAt:        plan.exec.CreatedAt.UTC().Format(time.RFC3339),
+			WebhookRegistered: plan.webhookRegistered,
+		}
+		if plan.webhookError != nil {
+			response.WebhookError = plan.webhookError
+		}
+		ctx.Header("X-Execution-ID", plan.exec.ExecutionID)
+		ctx.Header("X-Run-ID", plan.exec.RunID)
+		ctx.JSON(http.StatusAccepted, response)
+		return
 	}
 	if err := enqueueCompletion(job); err != nil {
 		logger.Logger.Error().Err(err).Str("execution_id", plan.exec.ExecutionID).Msg("failed to enqueue completion job")
@@ -322,6 +361,148 @@ func (c *executionController) handleBatchStatus(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, response)
+}
+
+func (c *executionController) handleStatusUpdate(ctx *gin.Context) {
+	reqCtx := ctx.Request.Context()
+	executionID := ctx.Param("execution_id")
+	if executionID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "execution_id is required"})
+		return
+	}
+
+	var req executionStatusUpdateRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("invalid request body: %v", err)})
+		return
+	}
+
+	normalizedStatus := types.NormalizeExecutionStatus(req.Status)
+	if normalizedStatus == "" || normalizedStatus == string(types.ExecutionStatusUnknown) {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unsupported status '%s'", req.Status)})
+		return
+	}
+
+	var (
+		resultBytes []byte
+		err         error
+	)
+	if len(req.Result) > 0 {
+		resultBytes, err = json.Marshal(req.Result)
+		if err != nil {
+			ctx.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("failed to encode result: %v", err)})
+			return
+		}
+	}
+
+	resultURI := c.savePayload(reqCtx, resultBytes)
+	isTerminal := types.IsTerminalExecutionStatus(normalizedStatus)
+	var elapsed time.Duration
+	var errorMsg *string
+
+	updated, err := c.store.UpdateExecutionRecord(reqCtx, executionID, func(current *types.Execution) (*types.Execution, error) {
+		if current == nil {
+			return nil, fmt.Errorf("execution %s not found", executionID)
+		}
+
+		current.Status = normalizedStatus
+		if len(resultBytes) > 0 {
+			current.ResultPayload = json.RawMessage(resultBytes)
+			current.ResultURI = resultURI
+		}
+
+		if req.Error != "" {
+			errCopy := req.Error
+			current.ErrorMessage = &errCopy
+			errorMsg = &errCopy
+		} else if normalizedStatus == string(types.ExecutionStatusSucceeded) {
+			current.ErrorMessage = nil
+			errorMsg = nil
+		}
+
+		if req.DurationMS != nil {
+			current.DurationMS = req.DurationMS
+			elapsed = time.Duration(*req.DurationMS) * time.Millisecond
+		} else if isTerminal && !current.StartedAt.IsZero() {
+			var completed time.Time
+			if req.CompletedAt != nil && !req.CompletedAt.IsZero() {
+				completed = req.CompletedAt.UTC()
+			} else {
+				completed = time.Now().UTC()
+			}
+			elapsed = completed.Sub(current.StartedAt)
+			duration := elapsed.Milliseconds()
+			current.DurationMS = pointerInt64(duration)
+		}
+
+		if normalizedStatus == string(types.ExecutionStatusSucceeded) || normalizedStatus == string(types.ExecutionStatusFailed) || normalizedStatus == string(types.ExecutionStatusCancelled) || normalizedStatus == string(types.ExecutionStatusTimeout) {
+			if req.CompletedAt != nil && !req.CompletedAt.IsZero() {
+				completed := req.CompletedAt.UTC()
+				current.CompletedAt = &completed
+			} else {
+				now := time.Now().UTC()
+				current.CompletedAt = &now
+			}
+		} else if req.CompletedAt != nil && !req.CompletedAt.IsZero() {
+			completed := req.CompletedAt.UTC()
+			current.CompletedAt = &completed
+		} else {
+			current.CompletedAt = nil
+		}
+
+		return current, nil
+	})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to update execution: %v", err)})
+		return
+	}
+	if updated == nil {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "execution not found"})
+		return
+	}
+	if elapsed == 0 && updated.DurationMS != nil {
+		elapsed = time.Duration(*updated.DurationMS) * time.Millisecond
+	}
+
+	if isTerminal {
+		c.updateWorkflowExecutionFinalState(reqCtx, executionID, types.ExecutionStatus(normalizedStatus), updated.ResultPayload, elapsed, errorMsg)
+		if updated.WebhookRegistered {
+			c.triggerWebhook(executionID)
+		}
+	}
+
+	c.publishExecutionEvent(updated, normalizedStatus, map[string]interface{}{
+		"result":   req.Result,
+		"error":    req.Error,
+		"progress": req.Progress,
+	})
+
+	ctx.JSON(http.StatusOK, renderStatus(updated))
+}
+
+func (c *executionController) publishExecutionEvent(exec *types.Execution, status string, data map[string]interface{}) {
+	if c.eventBus == nil || exec == nil {
+		return
+	}
+
+	eventType := events.ExecutionUpdated
+	switch status {
+	case string(types.ExecutionStatusSucceeded):
+		eventType = events.ExecutionCompleted
+	case string(types.ExecutionStatusFailed):
+		eventType = events.ExecutionFailed
+	}
+
+	event := events.ExecutionEvent{
+		Type:        eventType,
+		ExecutionID: exec.ExecutionID,
+		WorkflowID:  exec.RunID,
+		AgentNodeID: exec.AgentNodeID,
+		Status:      status,
+		Timestamp:   time.Now(),
+		Data:        data,
+	}
+	c.eventBus.Publish(event)
 }
 
 type preparedExecution struct {
@@ -476,13 +657,13 @@ func (c *executionController) prepareExecution(ctx context.Context, ginCtx *gin.
 	}, nil
 }
 
-func (c *executionController) callAgent(ctx context.Context, plan *preparedExecution) ([]byte, time.Duration, error) {
+func (c *executionController) callAgent(ctx context.Context, plan *preparedExecution) ([]byte, time.Duration, bool, error) {
 	start := time.Now()
 	url := buildAgentURL(plan.agent, plan.target)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(plan.requestBody))
 	if err != nil {
-		return nil, 0, fmt.Errorf("create agent request: %w", err)
+		return nil, 0, false, fmt.Errorf("create agent request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Run-ID", plan.exec.RunID)
@@ -499,20 +680,29 @@ func (c *executionController) callAgent(ctx context.Context, plan *preparedExecu
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, time.Since(start), fmt.Errorf("agent call failed: %w", err)
+		return nil, time.Since(start), false, fmt.Errorf("agent call failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusAccepted {
+		logger.Logger.Info().
+			Str("execution_id", plan.exec.ExecutionID).
+			Str("agent", plan.target.NodeID).
+			Str("reasoner", plan.target.TargetName).
+			Msg("agent acknowledged async execution")
+		return nil, time.Since(start), true, nil
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, time.Since(start), fmt.Errorf("read agent response: %w", err)
+		return nil, time.Since(start), false, fmt.Errorf("read agent response: %w", err)
 	}
 
 	if resp.StatusCode >= http.StatusBadRequest {
-		return body, time.Since(start), fmt.Errorf("agent error (%d): %s", resp.StatusCode, truncateForLog(body))
+		return body, time.Since(start), false, fmt.Errorf("agent error (%d): %s", resp.StatusCode, truncateForLog(body))
 	}
 
-	return body, time.Since(start), nil
+	return body, time.Since(start), false, nil
 }
 
 func (c *executionController) completeExecution(ctx context.Context, plan *preparedExecution, result []byte, elapsed time.Duration) error {
@@ -961,6 +1151,10 @@ func pointerString(v string) *string {
 	return &v
 }
 
+func pointerInt64(v int64) *int64 {
+	return &v
+}
+
 func truncateForLog(body []byte) string {
 	const limit = 1024
 	if len(body) <= limit {
@@ -984,7 +1178,13 @@ func (c *executionController) savePayload(ctx context.Context, data []byte) *str
 
 func (j asyncExecutionJob) process() {
 	bgCtx := context.Background()
-	resultBody, elapsed, callErr := j.controller.callAgent(bgCtx, &j.plan)
+	resultBody, elapsed, asyncAccepted, callErr := j.controller.callAgent(bgCtx, &j.plan)
+	if callErr == nil && asyncAccepted {
+		logger.Logger.Info().
+			Str("execution_id", j.plan.exec.ExecutionID).
+			Msg("agent accepted execution for async processing")
+		return
+	}
 	job := completionJob{
 		controller: j.controller,
 		plan:       &j.plan,

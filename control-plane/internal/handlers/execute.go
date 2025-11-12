@@ -201,6 +201,83 @@ func (c *executionController) handleSync(ctx *gin.Context) {
 	}
 
 	resultBody, elapsed, asyncAccepted, callErr := c.callAgent(reqCtx, plan)
+
+	// If agent returned HTTP 202 (async acknowledgment), wait for callback completion
+	if callErr == nil && asyncAccepted {
+		logger.Logger.Info().
+			Str("execution_id", plan.exec.ExecutionID).
+			Str("agent", plan.target.NodeID).
+			Str("reasoner", plan.target.TargetName).
+			Msg("agent returned async acknowledgment, waiting for completion")
+
+		// Wait for agent to call back and complete the execution
+		// Use 90 second timeout to match the HTTP client timeout
+		exec, waitErr := c.waitForExecutionCompletion(reqCtx, plan.exec.ExecutionID, 90*time.Second)
+		if waitErr != nil {
+			logger.Logger.Error().
+				Err(waitErr).
+				Str("execution_id", plan.exec.ExecutionID).
+				Msg("failed to wait for async execution completion")
+			writeExecutionError(ctx, waitErr)
+			return
+		}
+
+		// Build response from completed execution
+		var result interface{}
+		if exec.ResultPayload != nil {
+			result = decodeJSON(exec.ResultPayload)
+		}
+
+		var durationMS int64
+		if exec.DurationMS != nil {
+			durationMS = *exec.DurationMS
+		}
+
+		var finishedAt string
+		if exec.CompletedAt != nil {
+			finishedAt = exec.CompletedAt.UTC().Format(time.RFC3339)
+		} else {
+			finishedAt = time.Now().UTC().Format(time.RFC3339)
+		}
+
+		// Check if execution failed
+		if exec.Status == types.ExecutionStatusFailed {
+			errMsg := "execution failed"
+			if exec.ErrorMessage != nil {
+				errMsg = *exec.ErrorMessage
+			}
+			response := ExecuteResponse{
+				ExecutionID:       exec.ExecutionID,
+				RunID:             exec.RunID,
+				Status:            string(exec.Status),
+				ErrorMessage:      &errMsg,
+				DurationMS:        durationMS,
+				FinishedAt:        finishedAt,
+				WebhookRegistered: exec.WebhookRegistered,
+			}
+			ctx.Header("X-Execution-ID", exec.ExecutionID)
+			ctx.Header("X-Run-ID", exec.RunID)
+			ctx.JSON(http.StatusOK, response)
+			return
+		}
+
+		// Return successful execution result
+		response := ExecuteResponse{
+			ExecutionID:       exec.ExecutionID,
+			RunID:             exec.RunID,
+			Status:            string(exec.Status),
+			Result:            result,
+			DurationMS:        durationMS,
+			FinishedAt:        finishedAt,
+			WebhookRegistered: exec.WebhookRegistered,
+		}
+		ctx.Header("X-Execution-ID", exec.ExecutionID)
+		ctx.Header("X-Run-ID", exec.RunID)
+		ctx.JSON(http.StatusOK, response)
+		return
+	}
+
+	// Agent returned HTTP 200 (synchronous result), process completion normally
 	job := completionJob{
 		controller: c,
 		plan:       plan,
@@ -208,26 +285,6 @@ func (c *executionController) handleSync(ctx *gin.Context) {
 		elapsed:    elapsed,
 		callErr:    callErr,
 		done:       make(chan error, 1),
-	}
-	if callErr == nil && asyncAccepted {
-		response := AsyncExecuteResponse{
-			ExecutionID:       plan.exec.ExecutionID,
-			RunID:             plan.exec.RunID,
-			WorkflowID:        plan.exec.RunID,
-			Status:            string(types.ExecutionStatusRunning),
-			Target:            fmt.Sprintf("%s.%s", plan.target.NodeID, plan.target.TargetName),
-			Type:              plan.targetType,
-			CreatedAt:         plan.exec.CreatedAt.UTC().Format(time.RFC3339),
-			EnqueuedAt:        plan.exec.CreatedAt.UTC().Format(time.RFC3339),
-			WebhookRegistered: plan.webhookRegistered,
-		}
-		if plan.webhookError != nil {
-			response.WebhookError = plan.webhookError
-		}
-		ctx.Header("X-Execution-ID", plan.exec.ExecutionID)
-		ctx.Header("X-Run-ID", plan.exec.RunID)
-		ctx.JSON(http.StatusAccepted, response)
-		return
 	}
 	if err := enqueueCompletion(job); err != nil {
 		logger.Logger.Error().Err(err).Str("execution_id", plan.exec.ExecutionID).Msg("failed to enqueue completion job")
@@ -503,6 +560,72 @@ func (c *executionController) publishExecutionEvent(exec *types.Execution, statu
 		Data:        data,
 	}
 	c.eventBus.Publish(event)
+}
+
+// waitForExecutionCompletion waits for an execution to complete by subscribing to the event bus.
+// It returns the completed execution record or an error if the execution fails or times out.
+// This is used when agents return HTTP 202 (async acknowledgment) but the sync endpoint needs to wait for completion.
+func (c *executionController) waitForExecutionCompletion(ctx context.Context, executionID string, timeout time.Duration) (*types.Execution, error) {
+	if c.eventBus == nil {
+		return nil, fmt.Errorf("event bus not available")
+	}
+
+	// Create unique subscriber ID for this wait operation
+	subscriberID := fmt.Sprintf("sync-wait-%s", executionID)
+
+	// Subscribe to events
+	eventChan := c.eventBus.Subscribe(subscriberID)
+	defer c.eventBus.Unsubscribe(subscriberID)
+
+	// Create timeout timer
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	logger.Logger.Debug().
+		Str("execution_id", executionID).
+		Dur("timeout", timeout).
+		Msg("waiting for execution completion via event bus")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+
+		case <-timer.C:
+			logger.Logger.Warn().
+				Str("execution_id", executionID).
+				Dur("timeout", timeout).
+				Msg("execution completion timeout")
+			return nil, fmt.Errorf("execution timeout after %v", timeout)
+
+		case event := <-eventChan:
+			// Only process events for this specific execution
+			if event.ExecutionID != executionID {
+				continue
+			}
+
+			// Check if this is a terminal event
+			if event.Type == events.ExecutionCompleted || event.Type == events.ExecutionFailed {
+				logger.Logger.Debug().
+					Str("execution_id", executionID).
+					Str("event_type", string(event.Type)).
+					Msg("received terminal execution event")
+
+				// Fetch the updated execution record
+				exec, err := c.store.GetExecutionRecord(ctx, executionID)
+				if err != nil {
+					return nil, fmt.Errorf("failed to fetch execution after completion: %w", err)
+				}
+				if exec == nil {
+					return nil, fmt.Errorf("execution %s not found after completion event", executionID)
+				}
+
+				return exec, nil
+			}
+
+			// Continue waiting for other event types (ExecutionUpdated, etc.)
+		}
+	}
 }
 
 type preparedExecution struct {

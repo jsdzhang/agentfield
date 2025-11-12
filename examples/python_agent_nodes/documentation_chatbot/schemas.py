@@ -1,10 +1,13 @@
-"""Shared Pydantic schemas for the Documentation Chatbot example."""
+"""Simplified Pydantic schemas for the Documentation Chatbot - optimized for .ai compatibility."""
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+
+# ========================= Ingestion Schemas =========================
 
 
 class DocumentChunk(BaseModel):
@@ -28,28 +31,50 @@ class IngestReport(BaseModel):
     skipped_files: List[str] = Field(default_factory=list)
 
 
+# ========================= Query Planning Schemas (Simple: 2 attributes) =========================
+
+
 class QueryPlan(BaseModel):
-    """Lightweight plan describing how we will search + answer."""
+    """Diverse search queries generated from user question."""
 
-    search_terms: List[str]
-    must_include: List[str]
-    answer_style: str
-    refusal_condition: str
-
-
-class QuestionFocus(BaseModel):
-    """Normalized question context extracted from conversation text."""
-
-    question: str
-    key_terms: List[str]
-    context_note: str
+    queries: List[str] = Field(
+        description="3-5 semantically diverse search queries covering different angles"
+    )
+    strategy: str = Field(
+        description="Query diversity approach: 'broad', 'specific', or 'mixed'"
+    )
 
 
-class SearchAngles(BaseModel):
-    """Additional targeted queries to widen retrieval coverage."""
+# ========================= Retrieval Schemas =========================
 
-    queries: List[str]
-    focus: str = Field(description="Short note on what the extra queries target")
+
+class RetrievalResult(BaseModel):
+    """Single retrieved chunk with minimal metadata."""
+
+    text: str = Field(description="Chunk content")
+    source: str = Field(description="File path and line range, e.g., 'file.md:10-20'")
+    score: float = Field(description="Similarity score")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata including document_key reference"
+    )
+
+
+class DocumentContext(BaseModel):
+    """Full document context aggregated from matching chunks."""
+
+    document_key: str = Field(description="Unique document identifier")
+    full_text: str = Field(description="Complete document text")
+    relative_path: str = Field(description="File path relative to ingestion root")
+    matching_chunks: int = Field(description="Number of chunks that matched queries")
+    relevance_score: float = Field(description="Aggregated relevance score")
+    matched_sections: List[str] = Field(
+        default_factory=list,
+        description="Section headings where chunks matched"
+    )
+
+
+# ========================= Citation Schema (Kept for frontend compatibility) =========================
 
 
 class Citation(BaseModel):
@@ -64,42 +89,22 @@ class Citation(BaseModel):
     score: float
 
 
-class InlineAnswer(BaseModel):
-    """Schema enforced on the LLM so it returns simple structured data."""
-
-    answer: str
-    cited_keys: List[str]
-
-
-class ContextChunk(BaseModel):
-    """Single retrieved snippet with a short alias key."""
-
-    key: str
-    text: str
-    citation: Citation
-
-
-class ContextWindow(BaseModel):
-    """List of snippets passed between reasoners."""
-
-    contexts: List[ContextChunk]
-
-
-class AnswerCheck(BaseModel):
-    """Meta-judgement about whether an answer is complete and grounded."""
-
-    verdict: str = Field(description="One sentence summary of quality")
-    needs_more_context: bool = Field(description="True if answer should retrieve more")
-    missing_terms: List[str] = Field(default_factory=list)
-    unsupported_claims: List[str] = Field(
-        default_factory=list,
-        description="Answer statements not found in context",
-    )
+# ========================= Answer Schemas =========================
 
 
 class DocAnswer(BaseModel):
-    """Final response from the QA reasoner."""
+    """Final response from the QA system - maintains frontend contract."""
 
-    answer: str
-    citations: List[Citation]
-    plan: QueryPlan
+    answer: str = Field(description="Markdown answer with inline citations like [A][B]")
+    citations: List[Citation] = Field(description="Full citation details for references")
+    confidence: str = Field(
+        description="Answer confidence: 'high', 'partial', or 'insufficient'"
+    )
+    needs_more: bool = Field(
+        default=False,
+        description="True if more retrieval needed to fully answer question"
+    )
+    missing_topics: List[str] = Field(
+        default_factory=list,
+        description="Specific topics/info needed if needs_more=True"
+    )

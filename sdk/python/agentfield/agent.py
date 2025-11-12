@@ -23,6 +23,7 @@ from typing import (
     Literal,
 )
 from agentfield.agent_ai import AgentAI
+from agentfield.agent_cli import AgentCLI
 from agentfield.agent_field_handler import AgentFieldHandler
 from agentfield.agent_mcp import AgentMCP
 from agentfield.agent_registry import clear_current_agent, set_current_agent
@@ -504,6 +505,7 @@ class Agent(FastAPI):
 
         # Initialize handlers
         self.ai_handler = AgentAI(self)
+        self.cli_handler = AgentCLI(self)
         self.mcp_handler = AgentMCP(self)
         self.agentfield_handler = AgentFieldHandler(self)
         self.workflow_handler = AgentWorkflow(self)
@@ -3137,6 +3139,76 @@ class Agent(FastAPI):
         except Exception:
             # Ignore errors in destructor to prevent warnings during garbage collection
             pass
+
+    def run(self, **serve_kwargs):
+        """
+        Universal entry point - auto-detects CLI vs server mode.
+
+        This method intelligently determines whether to run in CLI mode or server mode
+        based on command-line arguments. It provides a seamless developer experience
+        where the same code can be used for both interactive CLI usage and production
+        server deployment.
+
+        CLI mode is activated when sys.argv contains commands like:
+        - 'call': Execute a specific function
+        - 'list': List all available functions
+        - 'shell': Launch interactive IPython shell
+        - 'help': Show help for a specific function
+
+        Server mode is activated otherwise, starting the FastAPI server.
+
+        Args:
+            **serve_kwargs: Keyword arguments passed to serve() method in server mode.
+                          Common options include:
+                          - port: Server port (default: auto-detected)
+                          - host: Server host (default: "0.0.0.0")
+                          - dev: Enable development mode (default: False)
+                          - auto_port: Auto-find available port (default: False)
+
+        Example:
+            ```python
+            from agentfield import Agent
+
+            app = Agent(node_id="my_agent")
+
+            @app.reasoner()
+            async def analyze(text: str) -> dict:
+                return {"result": text.upper()}
+
+            @app.skill()
+            def get_status() -> dict:
+                return {"status": "active"}
+
+            if __name__ == "__main__":
+                # Single entry point for both CLI and server
+                app.run()
+
+            # CLI usage:
+            # python main.py list
+            # python main.py call analyze --text "hello world"
+            # python main.py shell
+            # python main.py help analyze
+
+            # Server usage:
+            # python main.py
+            # python main.py --port 8080 --dev
+            ```
+
+        Note:
+            - CLI mode runs functions directly without starting a server
+            - Server mode starts the FastAPI server for production use
+            - The mode is automatically detected from command-line arguments
+            - No code changes needed to switch between modes
+        """
+        import sys
+
+        # Check if CLI mode is requested
+        if len(sys.argv) > 1 and sys.argv[1] in ['call', 'list', 'shell', 'help']:
+            # Run in CLI mode
+            self.cli_handler.run_cli()
+        else:
+            # Run in server mode
+            self.serve(**serve_kwargs)
 
     def serve(  # pragma: no cover - requires full server runtime integration
         self,

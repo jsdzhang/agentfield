@@ -17,32 +17,36 @@ app = Agent(
     node_id="hello-world",
     agentfield_server="http://localhost:8080",
     ai_config=AIConfig(
-        model=os.getenv("SMALL_MODEL", "openai/gpt-4o-mini"),
-        temperature=0.7
-    )
+        model=os.getenv("SMALL_MODEL", "openai/gpt-4o-mini"), temperature=0.7
+    ),
 )
 
 # ============= SKILL (DETERMINISTIC) =============
+
 
 @app.skill()
 def get_greeting(name: str) -> dict:
     """Returns a greeting template (deterministic - no AI)"""
     return {"message": f"Hello, {name}! Welcome to Agentfield."}
 
+
 # ============= REASONERS (AI-POWERED) =============
+
 
 class EmojiResult(BaseModel):
     """Simple schema for emoji addition"""
+
     text: str
     emoji: str
+
 
 @app.reasoner()
 async def add_emoji(text: str) -> EmojiResult:
     """Uses AI to add an appropriate emoji to text"""
     return await app.ai(
-        user=f"Add one appropriate emoji to this greeting: {text}",
-        schema=EmojiResult
+        user=f"Add one appropriate emoji to this greeting: {text}", schema=EmojiResult
     )
+
 
 @app.reasoner()
 async def say_hello(name: str) -> dict:
@@ -60,22 +64,15 @@ async def say_hello(name: str) -> dict:
     # Step 2: Add emoji using AI (reasoner)
     result = await add_emoji(greeting["message"])
 
-    return {
-        "greeting": result.text,
-        "emoji": result.emoji,
-        "name": name
-    }
+    return {"greeting": result.text, "emoji": result.emoji, "name": name}
 
-# ============= START SERVER =============
+
+# ============= START SERVER OR CLI =============
 
 if __name__ == "__main__":
     print("🚀 Hello World Agent")
     print("📍 Node: hello-world")
     print("🌐 Control Plane: http://localhost:8080")
-    print("\n✨ Try it:")
-    print('  curl -X POST http://localhost:8080/api/v1/execute/hello-world.say_hello \\')
-    print('    -H "Content-Type: application/json" \\')
-    print('    -d \'{"input": {"name": "Alice"}}\'')
-    print()
 
-    app.serve(auto_port=True)
+    # Universal entry point - auto-detects CLI vs server mode
+    app.run(auto_port=True)

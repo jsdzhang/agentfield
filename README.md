@@ -2,7 +2,7 @@
 
 <img src="assets/github hero.png" alt="AgentField - Kubernetes, for AI Agents" width="100%" />
 
-# The Control Plane for Autonomous Software
+# Kubernetes for AI Agents
 
 ### **Deploy, Scale, Observe, and Prove.**
 
@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/python-3.9+-3776AB.svg)](https://www.python.org/)
 [![Deploy with Docker](https://img.shields.io/badge/deploy-docker-2496ED.svg)](https://docs.docker.com/)
 
-**[📚 Documentation](https://agentfield.ai/docs)** • **[⚡ Quick Start](#-quick-start-in-60-seconds)** • **[🧠 The Paradigm Shift](#-why-agentfield)**
+**[📚 Documentation](https://agentfield.ai/docs)** • **[⚡ Quick Start](#-quick-start-in-60-seconds)** • **[🧠 Why AgentField](#-why-agentfield)**
 
 </div>
 
@@ -57,114 +57,150 @@ if __name__ == "__main__":
     app.run()
 ```
 
-**What just happened?**
-*   ✅ **Instant API:** Your function is now `POST /api/v1/execute/researcher.summarize`.
-*   ✅ **Async & Durable:** It runs on a durable execution engine. If the server crashes, it resumes.
-*   ✅ **Observable:** You get a full execution DAG, metrics, and logs automatically.
-*   ✅ **Auditable:** Every step produced a cryptographically signed Verifiable Credential (VC).
+**What you get for free:**
+*   ✅ **Instant API:** `POST /api/v1/execute/researcher.summarize`
+*   ✅ **Durable Execution:** Resumes automatically if the server crashes.
+*   ✅ **Observability:**  You get a full execution DAG, metrics, and logs automatically.
+*   ✅ **Audit:** Every step produces a cryptographically signed Verifiable Credential.
+
+---
+
+## 🚀 Quick Start in 60 Seconds
+
+### 1. Install
+```bash
+curl -fsSL https://agentfield.ai/install.sh | bash
+```
+
+### 2. Initialize
+```bash
+af init my-agent --defaults && cd my-agent
+```
+
+### 3. Run
+```bash
+af run
+```
+
+### 4. Call
+```bash
+curl -X POST http://localhost:8080/api/v1/execute/researcher.summarize \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"url": "https://example.com"}}'
+```
+
+<details>
+<summary>🐳 <strong>Docker / Troubleshooting</strong></summary>
+
+If you are running AgentField in Docker, you may need to set a callback URL so the Control Plane can reach your agent:
+
+```bash
+export AGENT_CALLBACK_URL="http://host.docker.internal:8001"
+```
+</details>
 
 ---
 
 ## 🧠 Why AgentField?
 
-**The Paradigm Shift: From "Chatbots" to "Systems"**
+**Software is starting to behave less like scripts and more like reasoning systems.**
+Once agents act across APIs, data layers, and critical paths, they need infrastructure: identity, routing, retries, observability, policies. We built AgentField because agents should behave as predictably as microservices.
 
-Most agent frameworks are designed for prototyping single-loop chatbots. But when you try to build **production systems** with multiple agents, you hit a wall.
+### From Prototype to Production
 
-| 🔴 The Old Way (Frameworks) | 💚 The AgentField Way (Infrastructure) |
-| :--- | :--- |
-| **Monolithic Deployment**<br>One team's bug crashes the whole system. | **Microservices Architecture**<br>Teams deploy agents independently. Zero coordination required. |
-| **"Trust Me" Logs**<br>Text logs that can be edited or lost. | **Cryptographic Proof**<br>Every action is signed (W3C DIDs). You can prove *exactly* what the AI did in court. |
-| **Black Box Execution**<br>Agent A calls Agent B... and context is lost. | **Distributed Tracing**<br>Visualize the entire DAG. See how data flows across the network. |
-| **Fragile State**<br>Restart the server, lose the memory. | **Durable Execution**<br>Workflows can run for days. State is persisted and recoverable. |
-| **Manual Plumbing**<br>Build your own queues, webhooks, and APIs. | **Batteries Included**<br>REST/gRPC, Async Queues, Webhooks, and Shared Memory out of the box. |
+Most frameworks (LangChain, CrewAI) are great for prototyping. But when you move to production, you hit walls: **Non-deterministic execution times**, **Multi-agent coordination**, and **Compliance**.
 
----
+AgentField isn't a framework you extend. It's **infrastructure** that solves these problems out of the box.
 
-## ⚡ Quick Start in 60 Seconds
-
-### 1. Install the CLI
-```bash
-curl -fsSL https://agentfield.ai/install.sh | bash
-```
-
-### 2. Initialize a New Agent
-```bash
-af init my-first-agent --defaults
-cd my-first-agent
-```
-
-### 3. Run It
-```bash
-# Starts the Control Plane + Your Agent
-af run
-```
-
-Your Control Plane is now live at **`http://localhost:8080`**.
-Open the dashboard to see your agent in action!
+| Capability       | Traditional Frameworks           | AgentField (Infrastructure)                   |
+| :--------------- | :------------------------------- | :-------------------------------------------- |
+| **Architecture** | Monolithic application           | **Distributed Microservices**                 |
+| **Team Model**   | Single team, single repo         | **Independent teams & deployments**           |
+| **Integration**  | Custom SDK per language          | **Standard REST/gRPC APIs**                   |
+| **Coordination** | Manual message passing           | **Service Discovery & Auto-DAGs**             |
+| **Memory**       | Configure vector stores manually | **Zero-config Scoped Memory & Vector Search** |
+| **Async**        | Roll your own queues             | **Durable Queues, Webhooks, Retries**         |
+| **Trust**        | "Trust me" logs                  | **DIDs & Verifiable Credentials**             |
 
 ---
 
-## 🏗️ Architecture
+## 🎯 Who is this for?
 
-AgentField is composed of a **Control Plane** (Go) and **Agent Nodes** (Python/Go/Any).
-
-<div align="center">
-<img src="assets/arch.png" alt="AgentField Architecture Diagram" width="80%" />
-</div>
-
-1.  **Control Plane:** The brain. Stateless, scalable. Handles routing, state, and verification.
-2.  **Agent Nodes:** Your code. Lightweight microservices that connect to the plane.
-3.  **Shared Memory Fabric:** Zero-config distributed state management.
+*   **Backend Engineers** shipping AI into production who want standard APIs, not magic.
+*   **Platform Teams** who don't want to build another homegrown orchestrator.
+*   **Enterprise Teams** in regulated industries (Finance, Health) needing audit trails.
+*   **Frontend Developers** who just want to `fetch()` an agent without Python headaches.
 
 ---
 
 ## 💎 Key Features
 
-### 🛡️ Identity & Trust (The Enterprise Killer Feature)
-Every agent gets a **W3C Decentralized Identifier (DID)**. Every execution produces a **Verifiable Credential (VC)**.
-*   **Audit Trails:** Export a cryptographic chain of custody for every decision.
-*   **Policy Enforcement:** "Only agents signed by 'Finance Team' can access this data."
+### 🧩 Scale Infrastructure
+*   **Control Plane:** Stateless Go service that handles routing and state.
+*   **Async by Default:** Fire-and-forget or wait for results. Handles long-running tasks (hours/days) with **Webhooks**.
+*   **Shared Memory Fabric:** Built-in, scoped memory (Workflow/Session/User) with **Vector Search** out of the box. No Redis/Pinecone required.
 
-### 🧩 Durable Async Execution
-Long-running tasks? No problem.
-*   **No Timeouts:** Reasoners can run for hours or days.
-*   **Webhooks:** Get notified via HMAC-signed webhooks when a job is done.
-*   **Retries:** Automatic exponential backoff for failures.
+### 🛡️ Identity & Trust
+*   **W3C DIDs:** Every agent has a cryptographic identity.
+*   **Verifiable Credentials:** Prove *exactly* what the AI did.
+*   **Policy:** "Only agents signed by 'Finance' can access this tool."
 
-### 🔌 Interoperability
-*   **REST & gRPC:** Call agents from React, iOS, or `curl`.
-*   **Language Agnostic:** Write agents in Python, Go, or any language with a gRPC client.
+### 🔭 Observability
+*   **DAG Visualization:** See the logic flow in real-time.
+*   **Metrics:** Prometheus endpoints at `/metrics`.
+*   **Logs:** Structured, correlated logs.
 
 ---
 
-## 🎨 See It In Action
+## 🔌 Interoperability
+
+Call your agents from anywhere. No SDK required.
+
+**Frontend (React/Next.js):**
+```javascript
+const response = await fetch("http://localhost:8080/api/v1/execute/researcher.summarize", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ input: { url: "https://example.com" } }),
+});
+const result = await response.json();
+```
+
+---
+
+## 🏗️ Architecture
 
 <div align="center">
-<img src="assets/UI.png" alt="AgentField Dashboard" width="90%" />
-<br/>
-<i>Real-time Observability • Execution DAGs • Verifiable Credentials</i>
+<img src="assets/arch.png" alt="AgentField Architecture Diagram" width="80%" />
 </div>
 
 ---
 
-## 🤝 Community & Support
+## ⚖️ Is AgentField for you?
 
-We are building the operating system for the agentic future. Join us!
+### ✅ YES if:
+*   You are building **multi-agent systems**.
+*   You need **independent deployment** (multiple teams).
+*   You need **compliance/audit trails**.
+*   You want **production infrastructure** (Queues, Retries, APIs).
 
-*   **[📚 Documentation](https://agentfield.ai/docs)** - Deep dives and API references.
-*   **[💡 GitHub Discussions](https://github.com/agentfield/agentfield/discussions)** - Feature requests and Q&A.
-*   **[🐦 Twitter/X](https://x.com/agentfield_dev)** - Updates and announcements.
-
-### Contributing
-AgentField is Apache 2.0 licensed. We welcome contributions from the community. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
+### ❌ NO if:
+*   You are building a **single-agent chatbot**.
+*   You are just **prototyping** and don't care about scale yet.
 
 ---
 
+## 🤝 Community
+
+**Agents are becoming part of production backends. They need identity, governance, and infrastructure. That’s why AgentField exists.**
+
+*   **[📚 Documentation](https://agentfield.ai/docs)**
+*   **[💡 GitHub Discussions](https://github.com/agentfield/agentfield/discussions)**
+*   **[🐦 Twitter/X](https://x.com/agentfield_dev)**
+*   **[📦 Examples](https://github.com/agentfield/agentfield-examples)**
+
 <div align="center">
-
 **Built by developers who got tired of duct-taping agents together.**
-
 **[🌐 Website](https://agentfield.ai)**
 
 </div>

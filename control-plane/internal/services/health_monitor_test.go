@@ -104,11 +104,6 @@ func (m *mockAgentClient) setMCPHealthResponse(nodeID string, response *interfac
 	m.mcpHealthResponses[nodeID] = response
 }
 
-func (m *mockAgentClient) setMCPHealthError(nodeID string, err error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.mcpHealthErrors[nodeID] = err
-}
 
 func (m *mockAgentClient) getStatusCallCountFor(nodeID string) int {
 	m.mu.RLock()

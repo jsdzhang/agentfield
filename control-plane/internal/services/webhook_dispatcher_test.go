@@ -398,7 +398,7 @@ func TestWebhookDispatcher_DispatchWebhook_Success(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"received": true}`))
+		_, _ = w.Write([]byte(`{"received": true}`))
 	}))
 	defer server.Close()
 

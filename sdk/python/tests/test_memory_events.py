@@ -26,7 +26,7 @@ def test_event_subscription_matches_scoped_event():
         scope_id="s1",
         key="cart.total",
         action="set",
-        new_value=42,
+        data=42,
     )
     sub = EventSubscription(["cart.*"], lambda e: None, scope="session", scope_id="s1")
     assert sub.matches_event(event) is True
@@ -69,7 +69,7 @@ async def test_memory_event_client_history(monkeypatch):
                     "scope_id": "s1",
                     "key": "cart.total",
                     "action": "set",
-                    "new_value": 10,
+                    "data": 10,
                 }
             ]
 
@@ -142,7 +142,7 @@ async def test_memory_event_client_listen_dispatches(monkeypatch):
     received = []
 
     async def callback(event):
-        received.append((event.key, event.new_value))
+        received.append((event.key, event.data))
         client.is_listening = False  # stop after first event
 
     client.subscriptions.append(EventSubscription(["order.*"], callback))
@@ -165,7 +165,7 @@ async def test_memory_event_client_listen_dispatches(monkeypatch):
             "scope_id": "s1",
             "key": "order.total",
             "action": "set",
-            "new_value": 99,
+            "data": 99,
         }
     )
 

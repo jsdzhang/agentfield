@@ -846,7 +846,9 @@ class Agent(FastAPI):
         if not self._current_execution_context:
             return None
 
-        memory_client = MemoryClient(self.client, self._current_execution_context)
+        memory_client = MemoryClient(
+            self.client, self._current_execution_context, agent_node_id=self.node_id
+        )
         if not self.memory_event_client:
             self.memory_event_client = MemoryEventClient(
                 self.agentfield_server, self._get_current_execution_context()
@@ -1545,23 +1547,23 @@ class Agent(FastAPI):
             @app.on_change("user.preferences.*")
             async def handle_preference_change(event):
                 '''React to user preference changes.'''
-                log_info(f"User preference changed: {event.path} = {event.new_value}")
+                log_info(f"User preference changed: {event.key} = {event.data}")
 
                 # Update related systems
                 if event.path.endswith("theme"):
-                    await update_ui_theme(event.new_value)
+                    await update_ui_theme(event.data)
                 elif event.path.endswith("language"):
-                    await update_localization(event.new_value)
+                    await update_localization(event.data)
 
             @app.on_change(["session.user_id", "session.permissions"])
             async def handle_session_change(event):
                 '''React to session-related changes.'''
                 if event.path == "session.user_id":
                     # User logged in/out
-                    await initialize_user_context(event.new_value)
+                    await initialize_user_context(event.data)
                 elif event.path == "session.permissions":
                     # Permissions updated
-                    await refresh_access_controls(event.new_value)
+                    await refresh_access_controls(event.data)
 
             # Memory changes trigger the listeners automatically
             app.memory.set("user.preferences.theme", "dark")  # Triggers handle_preference_change
@@ -1571,7 +1573,7 @@ class Agent(FastAPI):
         Note:
             - Listeners are called asynchronously when memory changes occur
             - Multiple patterns can be specified to listen for different memory paths
-            - Event object contains path, old_value, new_value, and timestamp
+            - Event object contains key, previous_data, data, and timestamp
             - Listeners should be lightweight to avoid blocking memory operations
         """
 

@@ -593,8 +593,9 @@ type MemoryChangeEvent struct {
 
 // EventMetadata holds context for a memory change event.
 type EventMetadata struct {
-	AgentID    string `json:"agent_id"`
-	WorkflowID string `json:"workflow_id"`
+	AgentID    string `json:"agent_id,omitempty"`
+	ActorID    string `json:"actor_id,omitempty"`
+	WorkflowID string `json:"workflow_id,omitempty"`
 }
 
 // DistributedLock represents a lock in the distributed system.

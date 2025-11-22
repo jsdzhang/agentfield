@@ -34,6 +34,22 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+func normalizePatterns(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+
+	parts := strings.Split(raw, ",")
+	patterns := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			patterns = append(patterns, trimmed)
+		}
+	}
+	return patterns
+}
+
 // WebSocketHandler handles WebSocket connections for memory events.
 func (h *MemoryEventsHandler) WebSocketHandler(c *gin.Context) {
 	ctx := c.Request.Context()
@@ -47,7 +63,7 @@ func (h *MemoryEventsHandler) WebSocketHandler(c *gin.Context) {
 	// Parse query parameters for filtering
 	scope := c.Query("scope")
 	scopeID := c.Query("scope_id")
-	patterns := strings.Split(c.Query("patterns"), ",")
+	patterns := normalizePatterns(c.Query("patterns"))
 
 	// Subscribe to memory changes
 	eventChan, err := h.storage.SubscribeToMemoryChanges(ctx, scope, scopeID)
@@ -104,7 +120,7 @@ func (h *MemoryEventsHandler) SSEHandler(c *gin.Context) {
 	// Parse query parameters for filtering
 	scope := c.Query("scope")
 	scopeID := c.Query("scope_id")
-	patterns := strings.Split(c.Query("patterns"), ",")
+	patterns := normalizePatterns(c.Query("patterns"))
 
 	// Subscribe to memory changes
 	eventChan, err := h.storage.SubscribeToMemoryChanges(ctx, scope, scopeID)

@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -514,17 +514,41 @@ class MemoryValue:
 class MemoryChangeEvent:
     """Represents a memory change event for reactive programming."""
 
-    scope: str
-    scope_id: str
-    key: str
-    action: str  # "set" or "delete"
-    old_value: Optional[Any] = None
-    new_value: Optional[Any] = None
+    id: Optional[str] = None
+    type: Optional[str] = None
     timestamp: Optional[str] = None
+    scope: str = ""
+    scope_id: str = ""
+    key: str = ""
+    action: str = ""
+    data: Optional[Any] = None
+    previous_data: Optional[Any] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
+    @property
+    def new_value(self) -> Optional[Any]:
+        """Backward compatibility alias for data."""
+        return self.data
+
+    @property
+    def old_value(self) -> Optional[Any]:
+        """Backward compatibility alias for previous_data."""
+        return self.previous_data
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryChangeEvent":
-        return cls(**data)
+        return cls(
+            id=data.get("id"),
+            type=data.get("type"),
+            timestamp=data.get("timestamp"),
+            scope=data.get("scope", ""),
+            scope_id=data.get("scope_id", ""),
+            key=data.get("key", ""),
+            action=data.get("action", ""),
+            data=data.get("data"),
+            previous_data=data.get("previous_data"),
+            metadata=data.get("metadata") or {},
+        )

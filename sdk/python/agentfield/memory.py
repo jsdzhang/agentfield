@@ -31,10 +31,36 @@ class MemoryClient:
     """
 
     def __init__(
-        self, agentfield_client: AgentFieldClient, execution_context: ExecutionContext
+        self,
+        agentfield_client: AgentFieldClient,
+        execution_context: ExecutionContext,
+        agent_node_id: Optional[str] = None,
     ):
         self.agentfield_client = agentfield_client
         self.execution_context = execution_context
+        self.agent_node_id = agent_node_id
+
+    def _build_headers(
+        self, scope: Optional[str] = None, scope_id: Optional[str] = None
+    ) -> Dict[str, str]:
+        """Merge execution context headers with explicit scope overrides."""
+
+        headers = self.execution_context.to_headers()
+
+        if (not headers.get("X-Agent-Node-ID")) and self.agent_node_id:
+            headers["X-Agent-Node-ID"] = self.agent_node_id
+
+        if scope_id is not None:
+            header_name = {
+                "workflow": "X-Workflow-ID",
+                "session": "X-Session-ID",
+                "actor": "X-Actor-ID",
+            }.get(scope or "")
+
+            if header_name:
+                headers[header_name] = scope_id
+
+        return headers
 
     async def _async_request(self, method: str, url: str, **kwargs):
         """Internal helper to perform HTTP requests with graceful fallbacks."""
@@ -51,7 +77,9 @@ class MemoryClient:
 
             return await asyncio.to_thread(requests.request, method, url, **kwargs)
 
-    async def set(self, key: str, data: Any, scope: Optional[str] = None) -> None:
+    async def set(
+        self, key: str, data: Any, scope: Optional[str] = None, scope_id: Optional[str] = None
+    ) -> None:
         """
         Set a memory value with automatic scoping.
 
@@ -62,7 +90,7 @@ class MemoryClient:
         """
         from agentfield.logger import log_debug
 
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
 
         payload = {"key": key, "data": data}
 
@@ -113,11 +141,12 @@ class MemoryClient:
         embedding: Union[Sequence[float], Any],
         metadata: Optional[Dict[str, Any]] = None,
         scope: Optional[str] = None,
+        scope_id: Optional[str] = None,
     ) -> None:
         """
         Store a vector embedding with optional metadata.
         """
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
         payload: Dict[str, Any] = {
             "key": key,
             "embedding": _vector_to_list(embedding),
@@ -137,7 +166,11 @@ class MemoryClient:
         response.raise_for_status()
 
     async def get(
-        self, key: str, default: Any = None, scope: Optional[str] = None
+        self,
+        key: str,
+        default: Any = None,
+        scope: Optional[str] = None,
+        scope_id: Optional[str] = None,
     ) -> Any:
         """
         Get a memory value with hierarchical lookup.
@@ -150,7 +183,7 @@ class MemoryClient:
         Returns:
             The stored value or default if not found
         """
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
 
         payload = {"key": key}
 
@@ -184,7 +217,9 @@ class MemoryClient:
 
         return result
 
-    async def exists(self, key: str, scope: Optional[str] = None) -> bool:
+    async def exists(
+        self, key: str, scope: Optional[str] = None, scope_id: Optional[str] = None
+    ) -> bool:
         """
         Check if a memory key exists.
 
@@ -196,12 +231,14 @@ class MemoryClient:
             True if key exists, False otherwise
         """
         try:
-            await self.get(key, scope=scope)
+            await self.get(key, scope=scope, scope_id=scope_id)
             return True
         except Exception:
             return False
 
-    async def delete(self, key: str, scope: Optional[str] = None) -> None:
+    async def delete(
+        self, key: str, scope: Optional[str] = None, scope_id: Optional[str] = None
+    ) -> None:
         """
         Delete a memory value.
 
@@ -209,7 +246,7 @@ class MemoryClient:
             key: The memory key
             scope: Optional explicit scope override
         """
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
 
         payload = {"key": key}
 
@@ -225,11 +262,13 @@ class MemoryClient:
         )
         response.raise_for_status()
 
-    async def delete_vector(self, key: str, scope: Optional[str] = None) -> None:
+    async def delete_vector(
+        self, key: str, scope: Optional[str] = None, scope_id: Optional[str] = None
+    ) -> None:
         """
         Delete a stored vector embedding.
         """
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
         payload: Dict[str, Any] = {"key": key}
         if scope:
             payload["scope"] = scope
@@ -242,7 +281,9 @@ class MemoryClient:
         )
         response.raise_for_status()
 
-    async def list_keys(self, scope: str) -> List[str]:
+    async def list_keys(
+        self, scope: str, scope_id: Optional[str] = None
+    ) -> List[str]:
         """
         List all keys in a specific scope.
 
@@ -252,7 +293,7 @@ class MemoryClient:
         Returns:
             List of memory keys in the scope
         """
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
 
         response = await self._async_request(
             "GET",
@@ -275,12 +316,13 @@ class MemoryClient:
         query_embedding: Union[Sequence[float], Any],
         top_k: int = 10,
         scope: Optional[str] = None,
+        scope_id: Optional[str] = None,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform a similarity search against stored vectors.
         """
-        headers = self.execution_context.to_headers()
+        headers = self._build_headers(scope, scope_id)
         payload: Dict[str, Any] = {
             "query_embedding": _vector_to_list(query_embedding),
             "top_k": top_k,
@@ -326,23 +368,31 @@ class ScopedMemoryClient:
 
     async def set(self, key: str, data: Any) -> None:
         """Set a value in this specific scope."""
-        await self.memory_client.set(key, data, scope=self.scope)
+        await self.memory_client.set(
+            key, data, scope=self.scope, scope_id=self.scope_id
+        )
 
     async def get(self, key: str, default: Any = None) -> Any:
         """Get a value from this specific scope."""
-        return await self.memory_client.get(key, default=default, scope=self.scope)
+        return await self.memory_client.get(
+            key, default=default, scope=self.scope, scope_id=self.scope_id
+        )
 
     async def exists(self, key: str) -> bool:
         """Check if a key exists in this specific scope."""
-        return await self.memory_client.exists(key, scope=self.scope)
+        return await self.memory_client.exists(
+            key, scope=self.scope, scope_id=self.scope_id
+        )
 
     async def delete(self, key: str) -> None:
         """Delete a value from this specific scope."""
-        await self.memory_client.delete(key, scope=self.scope)
+        await self.memory_client.delete(
+            key, scope=self.scope, scope_id=self.scope_id
+        )
 
     async def list_keys(self) -> List[str]:
         """List all keys in this specific scope."""
-        return await self.memory_client.list_keys(self.scope)
+        return await self.memory_client.list_keys(self.scope, scope_id=self.scope_id)
 
     async def set_vector(
         self,
@@ -352,12 +402,18 @@ class ScopedMemoryClient:
     ) -> None:
         """Store a vector within this scope."""
         await self.memory_client.set_vector(
-            key, embedding, metadata=metadata, scope=self.scope
+            key,
+            embedding,
+            metadata=metadata,
+            scope=self.scope,
+            scope_id=self.scope_id,
         )
 
     async def delete_vector(self, key: str) -> None:
         """Delete a vector within this scope."""
-        await self.memory_client.delete_vector(key, scope=self.scope)
+        await self.memory_client.delete_vector(
+            key, scope=self.scope, scope_id=self.scope_id
+        )
 
     async def similarity_search(
         self,
@@ -367,7 +423,11 @@ class ScopedMemoryClient:
     ) -> List[Dict[str, Any]]:
         """Search vectors within this scope."""
         return await self.memory_client.similarity_search(
-            query_embedding, top_k=top_k, scope=self.scope, filters=filters
+            query_embedding,
+            top_k=top_k,
+            scope=self.scope,
+            scope_id=self.scope_id,
+            filters=filters,
         )
 
     def on_change(self, patterns: Union[str, List[str]]):

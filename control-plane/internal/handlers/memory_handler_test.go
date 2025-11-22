@@ -17,11 +17,12 @@ import (
 )
 
 type memoryStorageStub struct {
-	mu       sync.Mutex
-	store    map[string]*types.Memory
-	events   []*types.MemoryChangeEvent
-	setErr   error
-	eventErr error
+	mu        sync.Mutex
+	store     map[string]*types.Memory
+	events    []*types.MemoryChangeEvent
+	published []types.MemoryChangeEvent
+	setErr    error
+	eventErr  error
 }
 
 func newMemoryStorageStub() *memoryStorageStub {
@@ -88,6 +89,13 @@ func (m *memoryStorageStub) StoreEvent(ctx context.Context, event *types.MemoryC
 	return nil
 }
 
+func (m *memoryStorageStub) PublishMemoryChange(ctx context.Context, event types.MemoryChangeEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.published = append(m.published, event)
+	return nil
+}
+
 func (m *memoryStorageStub) SetVector(ctx context.Context, record *types.VectorRecord) error {
 	return nil
 }
@@ -111,6 +119,8 @@ func TestSetMemoryHandler_StoresMemoryAndEvent(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/memory/set", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Workflow-ID", "wf-123")
+	req.Header.Set("X-Agent-Node-ID", "agent-1")
+	req.Header.Set("X-Actor-ID", "user-42")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -129,6 +139,11 @@ func TestSetMemoryHandler_StoresMemoryAndEvent(t *testing.T) {
 
 	require.Len(t, storage.events, 1)
 	require.Equal(t, "set", storage.events[0].Action)
+	require.Equal(t, "agent-1", storage.events[0].Metadata.AgentID)
+	require.Equal(t, "user-42", storage.events[0].Metadata.ActorID)
+	require.Equal(t, "wf-123", storage.events[0].Metadata.WorkflowID)
+	require.Len(t, storage.published, 1)
+	require.Equal(t, "set", storage.published[0].Action)
 }
 
 func TestGetMemoryHandler_HierarchicalLookup(t *testing.T) {
@@ -174,6 +189,8 @@ func TestDeleteMemoryHandler_RemovesEntry(t *testing.T) {
 	body := `{"key":"gamma","scope":"global"}`
 	req := httptest.NewRequest(http.MethodPost, "/memory/delete", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-Node-ID", "agent-2")
+	req.Header.Set("X-Actor-ID", "user-99")
 
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
@@ -184,6 +201,10 @@ func TestDeleteMemoryHandler_RemovesEntry(t *testing.T) {
 	require.Error(t, err)
 	require.Len(t, storage.events, 1)
 	require.Equal(t, "delete", storage.events[0].Action)
+	require.Equal(t, "agent-2", storage.events[0].Metadata.AgentID)
+	require.Equal(t, "user-99", storage.events[0].Metadata.ActorID)
+	require.Len(t, storage.published, 1)
+	require.Equal(t, "delete", storage.published[0].Action)
 }
 
 func TestListMemoryHandler_ReturnsMemories(t *testing.T) {

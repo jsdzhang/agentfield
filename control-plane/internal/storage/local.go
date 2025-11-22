@@ -896,7 +896,7 @@ func (ls *LocalStorage) createSchema(ctx context.Context) error {
 
 func (ls *LocalStorage) initializeMemoryBuckets() error {
 	if err := ls.kvStore.Update(func(tx *bolt.Tx) error {
-		scopes := []string{"workflow", "session", "reasoner", "global"}
+		scopes := []string{"workflow", "session", "actor", "reasoner", "global"}
 		for _, scope := range scopes {
 			if _, err := tx.CreateBucketIfNotExists([]byte(scope)); err != nil {
 				return fmt.Errorf("failed to create BoltDB bucket '%s': %w", scope, err)
@@ -3640,15 +3640,6 @@ func (ls *LocalStorage) SetMemory(ctx context.Context, memory *types.Memory) err
 		// Update cache
 		ls.cache.Store(fmt.Sprintf("%s:%s", memory.Scope, key), memory)
 
-		// Publish change event (local pub/sub)
-		ls.publishMemoryChange(types.MemoryChangeEvent{
-			Scope:   memory.Scope,
-			ScopeID: memory.ScopeID,
-			Key:     memory.Key,
-			Action:  "set",
-			Data:    memory.Data,
-		})
-
 		return nil
 	})
 }
@@ -3726,14 +3717,6 @@ func (ls *LocalStorage) DeleteMemory(ctx context.Context, scope, scopeID, key st
 		// Delete from cache
 		cacheKey := fmt.Sprintf("%s:%s:%s", scope, scopeID, key)
 		ls.cache.Delete(cacheKey)
-
-		// Publish change event (local pub/sub)
-		ls.publishMemoryChange(types.MemoryChangeEvent{
-			Scope:   scope,
-			ScopeID: scopeID,
-			Key:     key,
-			Action:  "delete",
-		})
 
 		return nil
 	})
@@ -3844,14 +3827,6 @@ func (ls *LocalStorage) setMemoryPostgres(ctx context.Context, memory *types.Mem
 	cacheKey := fmt.Sprintf("%s:%s:%s", memory.Scope, memory.ScopeID, memory.Key)
 	ls.cache.Store(cacheKey, memory)
 
-	ls.publishMemoryChange(types.MemoryChangeEvent{
-		Scope:   memory.Scope,
-		ScopeID: memory.ScopeID,
-		Key:     memory.Key,
-		Action:  "set",
-		Data:    memory.Data,
-	})
-
 	return nil
 }
 
@@ -3903,13 +3878,6 @@ func (ls *LocalStorage) deleteMemoryPostgres(ctx context.Context, scope, scopeID
 
 	cacheKey := fmt.Sprintf("%s:%s:%s", scope, scopeID, key)
 	ls.cache.Delete(cacheKey)
-
-	ls.publishMemoryChange(types.MemoryChangeEvent{
-		Scope:   scope,
-		ScopeID: scopeID,
-		Key:     key,
-		Action:  "delete",
-	})
 
 	return nil
 }
@@ -4041,22 +4009,43 @@ func (ls *LocalStorage) Publish(channel string, message interface{}) error {
 }
 
 // publishMemoryChange is an internal helper to publish memory change events.
+func subscriberKey(scope, scopeID string) string {
+	if scope == "" {
+		scope = "*"
+	}
+	if scopeID == "" {
+		scopeID = "*"
+	}
+	return fmt.Sprintf("memory_changes:%s:%s", scope, scopeID)
+}
+
 func (ls *LocalStorage) publishMemoryChange(event types.MemoryChangeEvent) {
-	channel := fmt.Sprintf("memory_changes:%s:%s", event.Scope, event.ScopeID)
+	targets := map[string]struct{}{}
+	keys := []string{
+		subscriberKey(event.Scope, event.ScopeID),
+		subscriberKey(event.Scope, "*"),
+		subscriberKey("*", event.ScopeID),
+		subscriberKey("*", "*"),
+	}
+	for _, key := range keys {
+		targets[key] = struct{}{}
+	}
+
 	// Use a goroutine to avoid blocking the main thread
 	go func() {
 		ls.mu.RLock()
 		defer ls.mu.RUnlock()
 
-		if subscribers, ok := ls.subscribers[channel]; ok {
-			for _, subChannel := range subscribers {
-				// Non-blocking send
-				select {
-				case subChannel <- event:
-					// Sent successfully
-				default:
-					// Subscriber channel is full, drop the event or log a warning
-					fmt.Printf("Warning: Memory change subscriber channel for '%s' is full, dropping event.\n", channel)
+		for key := range targets {
+			if subscribers, ok := ls.subscribers[key]; ok {
+				for _, subChannel := range subscribers {
+					// Non-blocking send
+					select {
+					case subChannel <- event:
+						// Sent successfully
+					default:
+						fmt.Printf("Warning: Memory change subscriber channel for '%s' is full, dropping event.\n", key)
+					}
 				}
 			}
 		}
@@ -4522,7 +4511,7 @@ func (ls *LocalStorage) SubscribeToMemoryChanges(ctx context.Context, scope, sco
 		return nil, fmt.Errorf("context cancelled during subscribe to memory changes: %w", err)
 	}
 
-	channel := fmt.Sprintf("memory_changes:%s:%s", scope, scopeID)
+	channel := subscriberKey(scope, scopeID)
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 
@@ -4542,25 +4531,7 @@ func (ls *LocalStorage) PublishMemoryChange(ctx context.Context, event types.Mem
 		return fmt.Errorf("context cancelled during publish memory change: %w", err)
 	}
 
-	channel := fmt.Sprintf("memory_changes:%s:%s", event.Scope, event.ScopeID)
-	// Use a goroutine to avoid blocking the main thread
-	go func() {
-		ls.mu.RLock()
-		defer ls.mu.RUnlock()
-
-		if subscribers, ok := ls.subscribers[channel]; ok {
-			for _, subChannel := range subscribers {
-				// Non-blocking send
-				select {
-				case subChannel <- event:
-					// Sent successfully
-				default:
-					// Subscriber channel is full, drop the event or log a warning
-					fmt.Printf("Warning: Memory change subscriber channel for '%s' is full, dropping event.\n", channel)
-				}
-			}
-		}
-	}()
+	ls.publishMemoryChange(event)
 	return nil
 }
 

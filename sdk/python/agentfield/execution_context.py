@@ -27,6 +27,7 @@ class ExecutionContext:
     execution_id: str
     agent_instance: Any
     reasoner_name: str
+    agent_node_id: Optional[str] = None
     parent_execution_id: Optional[str] = None
     depth: int = 0
     started_at: float = 0.0
@@ -68,6 +69,10 @@ class ExecutionContext:
             "X-Workflow-Run-ID": self.run_id,
         }
 
+        node_id = getattr(self.agent_instance, "node_id", None)
+        if node_id:
+            headers["X-Agent-Node-ID"] = node_id
+
         if self.session_id:
             headers[_SESSION_HEADER] = self.session_id
         if self.actor_id:
@@ -82,6 +87,10 @@ class ExecutionContext:
             headers[_TARGET_DID_HEADER] = self.target_did
         if self.agent_node_did:
             headers[_AGENT_DID_HEADER] = self.agent_node_did
+        agent_instance = getattr(self, "agent_instance", None)
+        agent_node_id = self.agent_node_id or getattr(agent_instance, "node_id", None)
+        if agent_node_id:
+            headers["X-Agent-Node-ID"] = agent_node_id
 
         return headers
 
@@ -98,6 +107,7 @@ class ExecutionContext:
             run_id=self.run_id,
             execution_id=generate_execution_id(),
             agent_instance=self.agent_instance,
+            agent_node_id=self.agent_node_id,
             reasoner_name=self.reasoner_name,
             parent_execution_id=self.execution_id,
             depth=self.depth + 1,
@@ -156,6 +166,7 @@ class ExecutionContext:
             run_id=run_id,
             execution_id=execution_id,
             agent_instance=get_current_agent_instance(),
+            agent_node_id=agent_node_id,
             reasoner_name="unknown",
             parent_execution_id=parent_execution_id,
             session_id=session_id,
@@ -182,6 +193,7 @@ class ExecutionContext:
             run_id=run_id,
             execution_id=generate_execution_id(),
             agent_instance=get_current_agent_instance(),
+            agent_node_id=agent_node_id,
             reasoner_name=reasoner_name,
             parent_execution_id=None,
             workflow_id=run_id,

@@ -19,6 +19,7 @@ type MemoryStorage interface {
 	DeleteMemory(ctx context.Context, scope, scopeID, key string) error
 	ListMemory(ctx context.Context, scope, scopeID string) ([]*types.Memory, error)
 	StoreEvent(ctx context.Context, event *types.MemoryChangeEvent) error
+	PublishMemoryChange(ctx context.Context, event types.MemoryChangeEvent) error
 	SetVector(ctx context.Context, record *types.VectorRecord) error
 	DeleteVector(ctx context.Context, scope, scopeID, key string) error
 	SimilaritySearch(ctx context.Context, scope, scopeID string, queryEmbedding []float32, topK int, filters map[string]interface{}) ([]*types.VectorSearchResult, error)
@@ -130,7 +131,8 @@ func SetMemoryHandler(storageProvider MemoryStorage) gin.HandlerFunc {
 			Data:         dataJSON,
 			PreviousData: previousData,
 			Metadata: types.EventMetadata{
-				AgentID:    c.GetHeader("X-Actor-ID"),
+				AgentID:    c.GetHeader("X-Agent-Node-ID"),
+				ActorID:    c.GetHeader("X-Actor-ID"),
 				WorkflowID: c.GetHeader("X-Workflow-ID"),
 			},
 		}
@@ -140,6 +142,8 @@ func SetMemoryHandler(storageProvider MemoryStorage) gin.HandlerFunc {
 		if err := storageProvider.StoreEvent(ctx, event); err != nil {
 			// Log error but continue
 			logger.Logger.Warn().Err(err).Msg("Warning: Failed to store memory change event")
+		} else if err := storageProvider.PublishMemoryChange(ctx, *event); err != nil {
+			logger.Logger.Warn().Err(err).Msg("Warning: Failed to publish memory change event")
 		}
 		logger.Logger.Debug().Msg("🔍 MEMORY_HANDLER_DEBUG: Event storage completed")
 
@@ -244,7 +248,8 @@ func DeleteMemoryHandler(storageProvider MemoryStorage) gin.HandlerFunc {
 			Data:         nil, // No new data for delete
 			PreviousData: previousData,
 			Metadata: types.EventMetadata{
-				AgentID:    c.GetHeader("X-Actor-ID"),
+				AgentID:    c.GetHeader("X-Agent-Node-ID"),
+				ActorID:    c.GetHeader("X-Actor-ID"),
 				WorkflowID: c.GetHeader("X-Workflow-ID"),
 			},
 		}
@@ -253,6 +258,8 @@ func DeleteMemoryHandler(storageProvider MemoryStorage) gin.HandlerFunc {
 		if err := storageProvider.StoreEvent(ctx, event); err != nil {
 			// Log error but continue
 			logger.Logger.Warn().Err(err).Msg("Warning: Failed to store memory change event")
+		} else if err := storageProvider.PublishMemoryChange(ctx, *event); err != nil {
+			logger.Logger.Warn().Err(err).Msg("Warning: Failed to publish memory change event")
 		}
 
 		c.Status(http.StatusNoContent)

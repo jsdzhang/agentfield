@@ -4,6 +4,7 @@ import type { NavigationSection } from "./types";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -100,6 +101,35 @@ export function SidebarNew({ sections }: SidebarNewProps) {
           </SidebarGroup>
         ))}
       </SidebarContent>
+
+      <SidebarFooter className="border-t border-border/40 pt-2">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="Documentation">
+              <a href="https://agentfield.ai/docs" target="_blank" rel="noopener noreferrer">
+                <Icon name="documentation" size={15} className="text-muted-foreground" />
+                <span>Documentation</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="GitHub">
+              <a href="https://github.com/Agent-Field/agentfield" target="_blank" rel="noopener noreferrer">
+                <Icon name="github" size={15} className="text-muted-foreground" />
+                <span>GitHub</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="Support">
+              <a href="https://github.com/Agent-Field/agentfield/issues" target="_blank" rel="noopener noreferrer">
+                <Icon name="support" size={15} className="text-muted-foreground" />
+                <span>Support</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }

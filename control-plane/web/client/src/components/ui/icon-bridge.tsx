@@ -79,6 +79,7 @@ import { WarningOctagonIcon } from "@phosphor-icons/react/dist/csr/WarningOctago
 import { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
 import { XIcon } from "@phosphor-icons/react/dist/csr/X";
 import { GitBranchIcon } from "@phosphor-icons/react/dist/csr/GitBranch";
+import { GithubLogoIcon } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { WrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
 import { FileCodeIcon } from "@phosphor-icons/react/dist/csr/FileCode";
 import { FileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
@@ -222,6 +223,7 @@ export const CircleX = XCircleIcon;
 export const X = XIcon;
 export const WarningAltFilled = withDefaults(WarningCircleIcon, { weight: "fill" }, "WarningAltFilled");
 export const WarningFilled = withDefaults(WarningOctagonIcon, { weight: "fill" }, "WarningFilled");
+export const GithubLogo = GithubLogoIcon;
 export const GitBranch = GitBranchIcon;
 export const GitCommit = GitCommitIcon;
 export const BarChart3 = ChartBarIcon;

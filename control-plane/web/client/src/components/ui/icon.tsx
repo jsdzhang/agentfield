@@ -15,6 +15,9 @@ import {
   Monitor,
   ShieldCheck,
   Identification,
+  FileText,
+  GithubLogo,
+  Question,
 } from "@/components/ui/icon-bridge";
 import type { IconComponent, IconWeight } from "@/components/ui/icon-bridge";
 
@@ -34,6 +37,9 @@ const icons = {
   monitor: Monitor,
   "shield-check": ShieldCheck,
   identification: Identification,
+  documentation: FileText,
+  github: GithubLogo,
+  support: Question,
 } as const;
 
 export interface IconProps {

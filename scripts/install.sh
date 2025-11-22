@@ -27,9 +27,24 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 # Print functions
 print_banner() {
-  printf "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}\n"
-  printf "${CYAN}║${NC}           ${BOLD}AgentField CLI Installer${NC}                        ${CYAN}║${NC}\n"
-  printf "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}\n"
+  local width=64
+  local inner_width=$((width - 2))
+  local title="AgentField CLI Installer"
+
+  local horizontal_line
+  horizontal_line=$(printf '%*s' "$inner_width" '' | tr ' ' '═')
+
+  local title_length=${#title}
+  local padding_left=$(( (inner_width - title_length) / 2 ))
+  local padding_right=$(( inner_width - title_length - padding_left ))
+
+  local left_spaces right_spaces
+  printf -v left_spaces '%*s' "$padding_left" ''
+  printf -v right_spaces '%*s' "$padding_right" ''
+
+  printf "${CYAN}╔%s╗${NC}\n" "$horizontal_line"
+  printf "${CYAN}║${NC}%s${BOLD}%s${NC}%s${CYAN}║${NC}\n" "$left_spaces" "$title" "$right_spaces"
+  printf "${CYAN}╚%s╝${NC}\n" "$horizontal_line"
   printf "\n"
 }
 

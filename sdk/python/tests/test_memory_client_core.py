@@ -282,17 +282,27 @@ async def test_scoped_client_delegates(memory_client):
     await scoped.delete_vector("chunk")
     await scoped.similarity_search([0.2])
 
-    base.set.assert_awaited_once_with("key", 1, scope="session")
-    base.get.assert_awaited_once_with("key", default=None, scope="session")
-    base.exists.assert_awaited_once_with("key", scope="session")
-    base.delete.assert_awaited_once_with("key", scope="session")
-    base.list_keys.assert_awaited_once_with("session")
-    base.set_vector.assert_awaited_once_with(
-        "chunk", [0.1], metadata=None, scope="session"
+    base.set.assert_awaited_once_with(
+        "key", 1, scope="session", scope_id="abc"
     )
-    base.delete_vector.assert_awaited_once_with("chunk", scope="session")
+    base.get.assert_awaited_once_with(
+        "key", default=None, scope="session", scope_id="abc"
+    )
+    base.exists.assert_awaited_once_with("key", scope="session", scope_id="abc")
+    base.delete.assert_awaited_once_with("key", scope="session", scope_id="abc")
+    base.list_keys.assert_awaited_once_with("session", scope_id="abc")
+    base.set_vector.assert_awaited_once_with(
+        "chunk", [0.1], metadata=None, scope="session", scope_id="abc"
+    )
+    base.delete_vector.assert_awaited_once_with(
+        "chunk", scope="session", scope_id="abc"
+    )
     base.similarity_search.assert_awaited_once_with(
-        [0.2], top_k=10, scope="session", filters=None
+        [0.2],
+        top_k=10,
+        scope="session",
+        scope_id="abc",
+        filters=None,
     )
 
 

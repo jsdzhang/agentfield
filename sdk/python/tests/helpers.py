@@ -258,23 +258,93 @@ def create_test_agent(
         return _FakeAgentFieldClient(base_url, async_config)
 
     class _FakeMemoryClient:
-        def __init__(self, agentfield_client: Any, execution_context: Any):
+        def __init__(
+            self,
+            agentfield_client: Any,
+            execution_context: Any,
+            agent_node_id: Optional[str] = None,
+        ):
             self.agentfield_client = agentfield_client
             self.execution_context = execution_context
+            self.agent_node_id = agent_node_id
 
-        async def set(self, key: str, data: Any, scope: Optional[str] = None) -> None:
-            memory_store[key] = data
+        async def set(
+            self,
+            key: str,
+            data: Any,
+            scope: Optional[str] = None,
+            scope_id: Optional[str] = None,
+        ) -> None:
+            memory_store[(scope or "global", scope_id, key)] = data
 
         async def get(
-            self, key: str, default: Any = None, scope: Optional[str] = None
+            self,
+            key: str,
+            default: Any = None,
+            scope: Optional[str] = None,
+            scope_id: Optional[str] = None,
         ) -> Any:
-            return memory_store.get(key, default)
+            return memory_store.get((scope or "global", scope_id, key), default)
 
-        async def exists(self, key: str, scope: Optional[str] = None) -> bool:
-            return key in memory_store
+        async def exists(
+            self,
+            key: str,
+            scope: Optional[str] = None,
+            scope_id: Optional[str] = None,
+        ) -> bool:
+            return (scope or "global", scope_id, key) in memory_store
 
-        async def delete(self, key: str, scope: Optional[str] = None) -> None:
-            memory_store.pop(key, None)
+        async def delete(
+            self,
+            key: str,
+            scope: Optional[str] = None,
+            scope_id: Optional[str] = None,
+        ) -> None:
+            memory_store.pop((scope or "global", scope_id, key), None)
+
+        async def list_keys(
+            self, scope: str, scope_id: Optional[str] = None
+        ) -> List[str]:
+            prefix = (scope or "global", scope_id)
+            return [
+                stored_key[2]
+                for stored_key in memory_store.keys()
+                if stored_key[:2] == prefix
+            ]
+
+        async def set_vector(
+            self,
+            key: str,
+            embedding: Any,
+            metadata: Optional[Dict[str, Any]] = None,
+            scope: Optional[str] = None,
+            scope_id: Optional[str] = None,
+        ) -> None:
+            await self.set(
+                key,
+                {"embedding": embedding, "metadata": metadata},
+                scope=scope,
+                scope_id=scope_id,
+            )
+
+        async def delete_vector(
+            self, key: str, scope: Optional[str] = None, scope_id: Optional[str] = None
+        ) -> None:
+            await self.delete(key, scope=scope, scope_id=scope_id)
+
+        async def similarity_search(
+            self,
+            query_embedding: Any,
+            top_k: int = 10,
+            scope: Optional[str] = None,
+            scope_id: Optional[str] = None,
+            filters: Optional[Dict[str, Any]] = None,
+        ):
+            return [
+                {"key": key, "score": 1.0}
+                for (_, _, key) in memory_store.keys()
+                if key.startswith("chunk")
+            ]
 
     class _FakeMemoryEventClient:
         def __init__(self, *args, **kwargs):

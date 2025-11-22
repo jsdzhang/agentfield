@@ -4,6 +4,7 @@
 *.tmp
 *.swp
 *.swo
+test-reports/
 
 # Go
 bin/

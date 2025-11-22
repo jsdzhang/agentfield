@@ -107,6 +107,23 @@ class AgentFieldClient:
                 event_headers[key] = value
         return event_headers
 
+    def _sanitize_header_values(
+        self, headers: Dict[str, Any]
+    ) -> Dict[str, str]:
+        """Ensure all header values are concrete strings for requests/httpx."""
+
+        sanitized: Dict[str, str] = {}
+        for key, value in headers.items():
+            if value is None:
+                continue
+            if isinstance(value, bytes):
+                sanitized[key] = value.decode("utf-8", errors="replace")
+            elif isinstance(value, str):
+                sanitized[key] = value
+            else:
+                sanitized[key] = str(value)
+        return sanitized
+
     def _get_headers_with_context(
         self, headers: Optional[Dict[str, str]] = None
     ) -> Dict[str, str]:
@@ -485,8 +502,9 @@ class AgentFieldClient:
         if actor_id:
             final_headers["X-Actor-ID"] = actor_id
 
-        self._maybe_update_event_stream_headers(final_headers)
-        return final_headers
+        sanitized_headers = self._sanitize_header_values(final_headers)
+        self._maybe_update_event_stream_headers(sanitized_headers)
+        return sanitized_headers
 
     def _submit_execution_sync(
         self,

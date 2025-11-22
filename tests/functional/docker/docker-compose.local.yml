@@ -33,7 +33,7 @@ services:
       TEST_AGENT_CALLBACK_HOST: ${TEST_AGENT_CALLBACK_HOST:-test-runner}
     volumes:
       - ../:/tests
-      - test-reports:/reports
+      - ../../../test-reports:/reports
     depends_on:
       - control-plane
     networks:
@@ -52,4 +52,3 @@ networks:
 
 volumes:
   control-plane-data:
-  test-reports:

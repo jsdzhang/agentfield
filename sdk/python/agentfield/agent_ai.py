@@ -261,10 +261,14 @@ class AgentAI:
         utils_module = getattr(litellm_module, "utils", None) if litellm_module else None
         token_counter = getattr(utils_module, "token_counter", None) if utils_module else None
         trim_messages = getattr(utils_module, "trim_messages", None) if utils_module else None
+
         if token_counter is None:
-            token_counter = lambda model, messages: len(json.dumps(messages))
+            def token_counter(model: str, messages: list[dict]) -> int:
+                return len(json.dumps(messages))
+
         if trim_messages is None:
-            trim_messages = lambda messages, model, max_tokens: messages
+            def trim_messages(messages: list[dict], model: str, max_tokens: int) -> list[dict]:
+                return messages
 
         # Determine model context length using multiple fallback strategies
         model_context_length = None

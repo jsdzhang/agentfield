@@ -14,7 +14,7 @@ import socket
 import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 
 import uvicorn
 from agentfield import Agent

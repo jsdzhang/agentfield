@@ -9,7 +9,6 @@ import asyncio
 import pytest
 
 from utils import run_agent_server, unique_node_id
-from agentfield import Agent
 
 
 @pytest.mark.functional

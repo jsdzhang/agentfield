@@ -98,7 +98,7 @@ async def test_hello_world_with_openrouter(
         
         result_data = execution_response.json()
         
-        print(f"✓ Execution completed successfully")
+        print("✓ Execution completed successfully")
         print(f"  Response: {result_data}")
         
         # ====================================================================
@@ -122,7 +122,7 @@ async def test_hello_world_with_openrouter(
         answer = result["answer"]
         assert "12" in answer, f"Expected answer to contain '12', got: {answer}"
         
-        print(f"✓ Result validation passed")
+        print("✓ Result validation passed")
         print(f"  Question: {result['question']}")
         print(f"  Answer: {result['answer']}")
         
@@ -144,7 +144,7 @@ async def test_hello_world_with_openrouter(
         # For OpenRouter calls, we expect some non-trivial execution time
         assert result_data["duration_ms"] > 0, "Duration should be greater than 0 for real API calls"
         
-        print(f"✓ Metadata validation passed")
+        print("✓ Metadata validation passed")
         print(f"  Duration: {result_data['duration_ms']}ms")
         print(f"  Workflow ID: {headers.get('X-Workflow-ID', headers.get('x-workflow-id', 'N/A'))}")
         print(f"  Execution ID: {headers.get('X-Execution-ID', headers.get('x-execution-id', 'N/A'))}")

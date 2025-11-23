@@ -100,7 +100,7 @@ async def test_go_sdk_cli_and_control_plane(async_http_client, control_plane_url
         # Control plane reaches the agent via docker network name.
         "AGENT_PUBLIC_URL": "http://test-runner:8001",
     }
-    async with run_go_agent("hello", args=["serve"], env=env_server) as proc:
+    async with run_go_agent("hello", args=["serve"], env=env_server):
         await _wait_for_registration(async_http_client, node_id)
         await _wait_for_agent_health("http://127.0.0.1:8001/health")
 

@@ -58,12 +58,25 @@ When opening a PR:
 
 ## Release Workflow
 
-Releases are automated via GitHub Actions:
+Releases are automated via GitHub Actions. The workflow now uses
+[git-cliff](https://github.com/orhun/git-cliff) to render changelog entries from the
+commit history as part of the version bump step. Maintainers typically only need to:
 
-1. Update `CHANGELOG.md` with notable changes.
-2. Bump versions (Go modules, Python package) as needed.
-3. Tag the release following `vMAJOR.MINOR.PATCH`.
-4. The `release.yml` workflow builds artifacts and publishes SDKs.
+1. Ensure commits follow the conventional prefixes (`feat:`, `fix:`, etc.) so they are
+   categorized correctly.
+2. Trigger the `Release` workflow with the desired SemVer component/channel.
+3. Let the workflow bump versions, rebuild SDKs, update `CHANGELOG.md`, and publish
+   artifacts automatically.
+
+To preview the generated changelog locally install `git-cliff`
+(`cargo install git-cliff` or grab a release binary) and run:
+
+```bash
+python scripts/update_changelog.py --version 0.1.8 --dry-run
+```
+
+If you install via Cargo make sure `~/.cargo/bin` is on your `PATH` so `git cliff`
+invokes the plugin binary correctly.
 
 ## Questions?
 

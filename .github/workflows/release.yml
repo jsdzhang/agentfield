@@ -64,6 +64,11 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install git-cliff
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff
+
       - name: Determine publish flags
         id: flags
         run: |
@@ -106,6 +111,7 @@ jobs:
             fi
             version="$("${cmd[@]}")"
             tag="v${version}"
+            python scripts/update_changelog.py --version "${version}"
             git status --short
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"

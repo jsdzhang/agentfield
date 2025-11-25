@@ -4,7 +4,7 @@ Provides FastAPI-like automatic conversion of dictionary arguments to Pydantic m
 """
 
 import inspect
-from typing import Any, Dict, Tuple, Union, get_args, get_origin, get_type_hints
+from typing import Any, Tuple, Union, get_args, get_origin, get_type_hints
 
 from agentfield.logger import log_warn
 from pydantic import BaseModel, ValidationError

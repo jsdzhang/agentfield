@@ -84,7 +84,9 @@ class MemoryEventClient:
         self.execution_context = execution_context
         self.websocket: Optional[websockets.WebSocketClientProtocol] = None
         self.is_listening = False
-        self._connect_lock = asyncio.Lock()
+        # Lazily initialize the lock inside an active event loop to avoid
+        # `RuntimeError: There is no current event loop` in synchronous contexts.
+        self._connect_lock: Optional[asyncio.Lock] = None
         self.subscriptions: List[EventSubscription] = []
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 5
@@ -125,6 +127,9 @@ class MemoryEventClient:
             scope: Scope to filter events by
             scope_id: Scope ID to filter events by
         """
+        if self._connect_lock is None:
+            self._connect_lock = asyncio.Lock()
+
         async with self._connect_lock:
             if self._is_connected():
                 return

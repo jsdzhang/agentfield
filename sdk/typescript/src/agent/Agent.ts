@@ -1,7 +1,14 @@
 import express from 'express';
 import type http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import type { AgentConfig, HealthStatus } from '../types/agent.js';
+import type {
+  AgentConfig,
+  AgentHandler,
+  DeploymentType,
+  HealthStatus,
+  ServerlessEvent,
+  ServerlessResponse
+} from '../types/agent.js';
 import { ReasonerRegistry } from './ReasonerRegistry.js';
 import { SkillRegistry } from './SkillRegistry.js';
 import { AgentRouter } from '../router/AgentRouter.js';
@@ -27,6 +34,8 @@ import type { DiscoveryOptions } from '../types/agent.js';
 import type { MCPToolRegistration } from '../types/mcp.js';
 import { MCPClientRegistry } from '../mcp/MCPClientRegistry.js';
 import { MCPToolRegistrar } from '../mcp/MCPToolRegistrar.js';
+
+class TargetNotFoundError extends Error {}
 
 export class Agent {
   readonly config: AgentConfig;
@@ -56,8 +65,9 @@ export class Agent {
       port: 8001,
       agentFieldUrl: 'http://localhost:8080',
       host: '0.0.0.0',
-      didEnabled: config.didEnabled ?? true,
       ...config,
+      didEnabled: config.didEnabled ?? true,
+      deploymentType: config.deploymentType ?? 'long_running',
       mcp
     };
 
@@ -105,6 +115,18 @@ export class Agent {
   includeRouter(router: AgentRouter) {
     this.reasoners.includeRouter(router);
     this.skills.includeRouter(router);
+  }
+
+  handler(): AgentHandler {
+    return async (event: any, res?: any): Promise<ServerlessResponse | void> => {
+      // If a response object is provided, treat this as a standard HTTP request (e.g., Vercel/Netlify)
+      if (res && typeof res === 'object' && typeof (res as any).setHeader === 'function') {
+        return this.handleHttpRequest(event as http.IncomingMessage, res as http.ServerResponse);
+      }
+
+      // Fallback to a generic serverless event contract (AWS Lambda, Cloud Functions, etc.)
+      return this.handleServerlessEvent(event as ServerlessEvent);
+    };
   }
 
   watchMemory(pattern: string | string[], handler: MemoryWatchHandler, options?: { scope?: string; scopeId?: string }) {
@@ -314,6 +336,11 @@ export class Agent {
       res.json(this.health());
     });
 
+    // Discovery endpoint used for serverless registration (mirrors Python behaviour)
+    this.app.get('/discover', (_req, res) => {
+      res.json(this.discoveryPayload(this.config.deploymentType ?? 'long_running'));
+    });
+
     // MCP health probe expected by control-plane UI
     this.app.get('/health/mcp', async (_req, res) => {
       if (!this.mcpClientRegistry) {
@@ -354,121 +381,509 @@ export class Agent {
 
     this.app.post('/api/v1/skills/*', (req, res) => this.executeSkill(req, res, (req.params as any)[0]));
     this.app.post('/skills/:name', (req, res) => this.executeSkill(req, res, req.params.name));
+
+    // Serverless-friendly execute endpoint that accepts { target, input } or { reasoner, input }
+    this.app.post('/execute', (req, res) => this.executeServerlessHttp(req, res));
+    this.app.post('/execute/:name', (req, res) => this.executeServerlessHttp(req, res, req.params.name));
   }
 
   private async executeReasoner(req: express.Request, res: express.Response, name: string) {
-    const reasoner = this.reasoners.get(name);
-    if (!reasoner) {
-      res.status(404).json({ error: `Reasoner not found: ${name}` });
+    try {
+      await this.executeInvocation({
+        targetName: name,
+        targetType: 'reasoner',
+        input: req.body,
+        metadata: this.buildMetadata(req),
+        req,
+        res,
+        respond: true
+      });
+    } catch (err: any) {
+      if (err instanceof TargetNotFoundError) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err?.message ?? 'Execution failed' });
+      }
+    }
+  }
+
+  private async executeSkill(req: express.Request, res: express.Response, name: string) {
+    try {
+      await this.executeInvocation({
+        targetName: name,
+        targetType: 'skill',
+        input: req.body,
+        metadata: this.buildMetadata(req),
+        req,
+        res,
+        respond: true
+      });
+    } catch (err: any) {
+      if (err instanceof TargetNotFoundError) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err?.message ?? 'Execution failed' });
+      }
+    }
+  }
+
+  private buildMetadata(req: express.Request) {
+    return this.buildMetadataFromHeaders(req.headers);
+  }
+
+  private async executeServerlessHttp(req: express.Request, res: express.Response, explicitName?: string) {
+    const invocation = this.extractInvocationDetails({
+      path: req.path,
+      explicitTarget: explicitName,
+      query: req.query as Record<string, any>,
+      body: req.body
+    });
+
+    if (!invocation.name) {
+      res.status(400).json({ error: "Missing 'target' or 'reasoner' in request" });
       return;
     }
 
-    const metadata = this.buildMetadata(req);
-    const execCtx = new ExecutionContext({ input: req.body, metadata, req, res, agent: this });
+    try {
+      const result = await this.executeInvocation({
+        targetName: invocation.name,
+        targetType: invocation.targetType,
+        input: invocation.input,
+        metadata: this.buildMetadata(req),
+        req,
+        res,
+        respond: true
+      });
+
+      if (result !== undefined && !res.headersSent) {
+        res.json(result);
+      }
+    } catch (err: any) {
+      if (err instanceof TargetNotFoundError) {
+        res.status(404).json({ error: err.message });
+      } else {
+        res.status(500).json({ error: err?.message ?? 'Execution failed' });
+      }
+    }
+  }
+
+  private buildMetadataFromHeaders(
+    headers: Record<string, string | string[] | undefined>,
+    overrides?: Partial<ExecutionMetadata>
+  ): ExecutionMetadata {
+    const normalized: Record<string, string | undefined> = {};
+    Object.entries(headers ?? {}).forEach(([key, value]) => {
+      normalized[key.toLowerCase()] = Array.isArray(value) ? value[0] : value;
+    });
+
+    const executionId = overrides?.executionId ?? normalized['x-execution-id'] ?? randomUUID();
+    const runId = overrides?.runId ?? normalized['x-run-id'] ?? executionId;
+    const workflowId = overrides?.workflowId ?? normalized['x-workflow-id'] ?? runId;
+
+    return {
+      executionId,
+      runId,
+      workflowId,
+      sessionId: overrides?.sessionId ?? normalized['x-session-id'],
+      actorId: overrides?.actorId ?? normalized['x-actor-id'],
+      parentExecutionId: overrides?.parentExecutionId ?? normalized['x-parent-execution-id'],
+      callerDid: overrides?.callerDid ?? normalized['x-caller-did'],
+      targetDid: overrides?.targetDid ?? normalized['x-target-did'],
+      agentNodeDid:
+        overrides?.agentNodeDid ?? normalized['x-agent-node-did'] ?? normalized['x-agent-did']
+    };
+  }
+
+  private handleHttpRequest(req: http.IncomingMessage | express.Request, res: http.ServerResponse | express.Response) {
+    const handler = this.app as unknown as (req: http.IncomingMessage, res: http.ServerResponse) => void;
+    return handler(req as any, res as any);
+  }
+
+  private async handleServerlessEvent(event: ServerlessEvent): Promise<ServerlessResponse> {
+    const path = event?.path ?? event?.rawPath ?? '';
+    const action = event?.action ?? '';
+
+    if (path === '/discover' || action === 'discover') {
+      return {
+        statusCode: 200,
+        headers: { 'content-type': 'application/json' },
+        body: this.discoveryPayload(this.config.deploymentType ?? 'serverless')
+      };
+    }
+
+    const body = this.normalizeEventBody(event);
+    const invocation = this.extractInvocationDetails({
+      path,
+      query: event?.queryStringParameters,
+      body,
+      reasoner: event?.reasoner,
+      target: event?.target,
+      skill: event?.skill,
+      type: event?.type
+    });
+
+    if (!invocation.name) {
+      return {
+        statusCode: 400,
+        headers: { 'content-type': 'application/json' },
+        body: { error: "Missing 'target' or 'reasoner' in request" }
+      };
+    }
+
+    const metadata = this.buildMetadataFromHeaders(event?.headers ?? {}, this.mergeExecutionContext(event));
+
+    try {
+      const result = await this.executeInvocation({
+        targetName: invocation.name,
+        targetType: invocation.targetType,
+        input: invocation.input,
+        metadata
+      });
+
+      return { statusCode: 200, headers: { 'content-type': 'application/json' }, body: result };
+    } catch (err: any) {
+      if (err instanceof TargetNotFoundError) {
+        return {
+          statusCode: 404,
+          headers: { 'content-type': 'application/json' },
+          body: { error: err.message }
+        };
+      }
+
+      return {
+        statusCode: 500,
+        headers: { 'content-type': 'application/json' },
+        body: { error: err?.message ?? 'Execution failed' }
+      };
+    }
+  }
+
+  private normalizeEventBody(event: ServerlessEvent) {
+    const parsed = this.parseBody((event as any)?.body);
+    if (parsed && typeof parsed === 'object' && event?.input !== undefined && (parsed as any).input === undefined) {
+      return { ...(parsed as Record<string, any>), input: event.input };
+    }
+    if ((parsed === undefined || parsed === null) && event?.input !== undefined) {
+      return { input: event.input };
+    }
+    return parsed;
+  }
+
+  private mergeExecutionContext(event: ServerlessEvent): Partial<ExecutionMetadata> {
+    const ctx = (event?.executionContext ?? (event as any)?.execution_context) as Partial<
+      ExecutionMetadata & {
+        execution_id?: string;
+        run_id?: string;
+        workflow_id?: string;
+        parent_execution_id?: string;
+        session_id?: string;
+        actor_id?: string;
+        caller_did?: string;
+        target_did?: string;
+        agent_node_did?: string;
+      }
+    >;
+
+    if (!ctx) return {};
+
+    return {
+      executionId: (ctx as any).executionId ?? ctx.execution_id ?? ctx.executionId,
+      runId: ctx.runId ?? (ctx as any).run_id,
+      workflowId: ctx.workflowId ?? (ctx as any).workflow_id,
+      parentExecutionId: ctx.parentExecutionId ?? (ctx as any).parent_execution_id,
+      sessionId: ctx.sessionId ?? (ctx as any).session_id,
+      actorId: ctx.actorId ?? (ctx as any).actor_id,
+      callerDid: (ctx as any).callerDid ?? (ctx as any).caller_did,
+      targetDid: (ctx as any).targetDid ?? (ctx as any).target_did,
+      agentNodeDid: (ctx as any).agentNodeDid ?? (ctx as any).agent_node_did
+    };
+  }
+
+  private extractInvocationDetails(params: {
+    path?: string;
+    explicitTarget?: string;
+    query?: Record<string, any>;
+    body?: any;
+    reasoner?: string;
+    target?: string;
+    skill?: string;
+    type?: string;
+  }): { name?: string; targetType?: 'reasoner' | 'skill'; input: any } {
+    const pathTarget = this.parsePathTarget(params.path);
+    const name =
+      this.firstDefined<string>(
+        params.explicitTarget,
+        pathTarget.name,
+        params.query?.target,
+        params.query?.reasoner,
+        params.query?.skill,
+        params.target,
+        params.reasoner,
+        params.skill,
+        params.body?.target,
+        params.body?.reasoner,
+        params.body?.skill
+      ) ?? pathTarget.name;
+
+    const typeValue = (this.firstDefined<string>(
+      pathTarget.targetType,
+      params.type,
+      params.query?.type,
+      params.query?.targetType,
+      params.body?.type,
+      params.body?.targetType
+    ) ?? undefined) as 'reasoner' | 'skill' | undefined;
+
+    const input = this.normalizeInputPayload(params.body);
+
+    return { name: name ?? undefined, targetType: typeValue, input };
+  }
+
+  private parsePathTarget(
+    path?: string
+  ): { name?: string; targetType?: 'reasoner' | 'skill' } {
+    if (!path) return {};
+
+    const normalized = path.split('?')[0];
+    const reasonerMatch = normalized.match(/\/reasoners\/([^/]+)/);
+    if (reasonerMatch?.[1]) {
+      return { name: reasonerMatch[1], targetType: 'reasoner' };
+    }
+
+    const skillMatch = normalized.match(/\/skills\/([^/]+)/);
+    if (skillMatch?.[1]) {
+      return { name: skillMatch[1], targetType: 'skill' };
+    }
+
+    const executeMatch = normalized.match(/\/execute\/([^/]+)/);
+    if (executeMatch?.[1]) {
+      return { name: executeMatch[1] };
+    }
+
+    return {};
+  }
+
+  private parseBody(body: any) {
+    if (body === undefined || body === null) return body;
+    if (typeof body === 'string') {
+      try {
+        return JSON.parse(body);
+      } catch {
+        return body;
+      }
+    }
+    return body;
+  }
+
+  private normalizeInputPayload(body: any) {
+    if (body === undefined || body === null) return {};
+    const parsed = this.parseBody(body);
+
+    if (parsed && typeof parsed === 'object') {
+      const { target, reasoner, skill, type, targetType, ...rest } = parsed as Record<string, any>;
+      if ((parsed as any).input !== undefined) {
+        return (parsed as any).input;
+      }
+      if ((parsed as any).data !== undefined) {
+        return (parsed as any).data;
+      }
+      if (Object.keys(rest).length === 0) {
+        return {};
+      }
+      return rest;
+    }
+
+    return parsed;
+  }
+
+  private firstDefined<T>(...values: Array<T | undefined | null>): T | undefined {
+    for (const value of values) {
+      if (value !== undefined && value !== null) {
+        return value as T;
+      }
+    }
+    return undefined;
+  }
+
+  private reasonerDefinitions() {
+    return this.reasoners.all().map((r) => ({
+      id: r.name,
+      input_schema: r.options?.inputSchema ?? {},
+      output_schema: r.options?.outputSchema ?? {},
+      memory_config: r.options?.memoryConfig ?? {
+        auto_inject: [] as string[],
+        memory_retention: '',
+        cache_results: false
+      },
+      tags: r.options?.tags ?? []
+    }));
+  }
+
+  private skillDefinitions() {
+    return this.skills.all().map((s) => ({
+      id: s.name,
+      input_schema: s.options?.inputSchema ?? {},
+      tags: s.options?.tags ?? []
+    }));
+  }
+
+  private discoveryPayload(deploymentType: DeploymentType) {
+    return {
+      node_id: this.config.nodeId,
+      version: this.config.version,
+      deployment_type: deploymentType,
+      reasoners: this.reasonerDefinitions(),
+      skills: this.skillDefinitions()
+    };
+  }
+
+  private async executeInvocation(params: {
+    targetName: string;
+    targetType?: 'reasoner' | 'skill';
+    input: any;
+    metadata: ExecutionMetadata;
+    req?: express.Request;
+    res?: express.Response;
+    respond?: boolean;
+  }) {
+    const targetType = params.targetType;
+
+    if (targetType === 'skill') {
+      const skill = this.skills.get(params.targetName);
+      if (!skill) {
+        throw new TargetNotFoundError(`Skill not found: ${params.targetName}`);
+      }
+      return this.runSkill(skill, params);
+    }
+
+    const reasoner = this.reasoners.get(params.targetName);
+    if (reasoner) {
+      return this.runReasoner(reasoner, params);
+    }
+
+    const fallbackSkill = this.skills.get(params.targetName);
+    if (fallbackSkill) {
+      return this.runSkill(fallbackSkill, params);
+    }
+
+    throw new TargetNotFoundError(`Reasoner not found: ${params.targetName}`);
+  }
+
+  private async runReasoner(
+    reasoner: { handler: ReasonerHandler<any, any> },
+    params: {
+      targetName: string;
+      input: any;
+      metadata: ExecutionMetadata;
+      req?: express.Request;
+      res?: express.Response;
+      respond?: boolean;
+    }
+  ) {
+    const req = params.req ?? ({} as express.Request);
+    const res = params.res ?? ({} as express.Response);
+    const execCtx = new ExecutionContext({
+      input: params.input,
+      metadata: params.metadata,
+      req,
+      res,
+      agent: this
+    });
 
     return ExecutionContext.run(execCtx, async () => {
       try {
         const ctx = new ReasonerContext({
-          input: req.body,
-          executionId: metadata.executionId,
-          runId: metadata.runId,
-          sessionId: metadata.sessionId,
-          actorId: metadata.actorId,
-          workflowId: metadata.workflowId,
-          parentExecutionId: metadata.parentExecutionId,
-          callerDid: metadata.callerDid,
-          targetDid: metadata.targetDid,
-          agentNodeDid: metadata.agentNodeDid,
+          input: params.input,
+          executionId: params.metadata.executionId,
+          runId: params.metadata.runId,
+          sessionId: params.metadata.sessionId,
+          actorId: params.metadata.actorId,
+          workflowId: params.metadata.workflowId,
+          parentExecutionId: params.metadata.parentExecutionId,
+          callerDid: params.metadata.callerDid,
+          targetDid: params.metadata.targetDid,
+          agentNodeDid: params.metadata.agentNodeDid,
           req,
           res,
           agent: this,
           aiClient: this.aiClient,
-          memory: this.getMemoryInterface(metadata),
-          workflow: this.getWorkflowReporter(metadata),
-          did: this.getDidInterface(metadata, req.body)
+          memory: this.getMemoryInterface(params.metadata),
+          workflow: this.getWorkflowReporter(params.metadata),
+          did: this.getDidInterface(params.metadata, params.input)
         });
 
         const result = await reasoner.handler(ctx);
-        res.json(result);
+        if (params.respond && params.res) {
+          params.res.json(result);
+          return;
+        }
+        return result;
       } catch (err: any) {
-        res.status(500).json({ error: err?.message ?? 'Execution failed' });
+        if (params.respond && params.res) {
+          params.res.status(500).json({ error: err?.message ?? 'Execution failed' });
+          return;
+        }
+        throw err;
       }
     });
   }
 
-  private async executeSkill(req: express.Request, res: express.Response, name: string) {
-    const skill = this.skills.get(name);
-    if (!skill) {
-      res.status(404).json({ error: `Skill not found: ${name}` });
-      return;
+  private async runSkill(
+    skill: { handler: SkillHandler<any, any> },
+    params: {
+      targetName: string;
+      input: any;
+      metadata: ExecutionMetadata;
+      req?: express.Request;
+      res?: express.Response;
+      respond?: boolean;
     }
-
-    const metadata = this.buildMetadata(req);
-    const execCtx = new ExecutionContext({ input: req.body, metadata, req, res, agent: this });
+  ) {
+    const req = params.req ?? ({} as express.Request);
+    const res = params.res ?? ({} as express.Response);
+    const execCtx = new ExecutionContext({
+      input: params.input,
+      metadata: params.metadata,
+      req,
+      res,
+      agent: this
+    });
 
     return ExecutionContext.run(execCtx, async () => {
       try {
         const ctx = new SkillContext({
-          input: req.body,
-          executionId: metadata.executionId,
-          sessionId: metadata.sessionId,
-          workflowId: metadata.workflowId,
+          input: params.input,
+          executionId: params.metadata.executionId,
+          sessionId: params.metadata.sessionId,
+          workflowId: params.metadata.workflowId,
           req,
           res,
           agent: this,
-          memory: this.getMemoryInterface(metadata),
-          workflow: this.getWorkflowReporter(metadata),
-          did: this.getDidInterface(metadata, req.body)
+          memory: this.getMemoryInterface(params.metadata),
+          workflow: this.getWorkflowReporter(params.metadata),
+          did: this.getDidInterface(params.metadata, params.input)
         });
 
         const result = await skill.handler(ctx);
-        res.json(result);
+        if (params.respond && params.res) {
+          params.res.json(result);
+          return;
+        }
+        return result;
       } catch (err: any) {
-        res.status(500).json({ error: err?.message ?? 'Execution failed' });
+        if (params.respond && params.res) {
+          params.res.status(500).json({ error: err?.message ?? 'Execution failed' });
+          return;
+        }
+        throw err;
       }
     });
   }
 
-  private buildMetadata(req: express.Request) {
-    const executionIdHeader = req.headers['x-execution-id'] as string | undefined;
-    const runIdHeader = req.headers['x-run-id'] as string | undefined;
-    const executionId = executionIdHeader ?? randomUUID();
-    const runId = runIdHeader ?? executionId;
-    const workflowIdHeader = (req.headers['x-workflow-id'] as string | undefined) ?? runId;
-    return {
-      executionId,
-      runId,
-      sessionId: req.headers['x-session-id'] as string | undefined,
-      actorId: req.headers['x-actor-id'] as string | undefined,
-      workflowId: workflowIdHeader,
-      parentExecutionId: req.headers['x-parent-execution-id'] as string | undefined,
-      callerDid: req.headers['x-caller-did'] as string | undefined,
-      targetDid: req.headers['x-target-did'] as string | undefined,
-      agentNodeDid:
-        (req.headers['x-agent-node-did'] as string | undefined) ??
-        (req.headers['x-agent-did'] as string | undefined)
-    };
-  }
-
   private async registerWithControlPlane() {
     try {
-      const reasoners = this.reasoners.all().map((r) => ({
-        id: r.name,
-        input_schema: r.options?.inputSchema ?? {},
-        output_schema: r.options?.outputSchema ?? {},
-        memory_config: r.options?.memoryConfig ?? {
-          auto_inject: [] as string[],
-          memory_retention: '',
-          cache_results: false
-        },
-        tags: r.options?.tags ?? []
-      }));
-
-      const skills = this.skills.all().map((s) => ({
-        id: s.name,
-        input_schema: s.options?.inputSchema ?? {},
-        tags: s.options?.tags ?? []
-      }));
+      const reasoners = this.reasonerDefinitions();
+      const skills = this.skillDefinitions();
 
       const port = this.config.port ?? 8001;
       const hostForUrl = this.config.publicUrl
@@ -482,7 +897,7 @@ export class Agent {
         version: this.config.version,
         base_url: publicUrl,
         public_url: publicUrl,
-        deployment_type: 'long_running',
+        deployment_type: this.config.deploymentType ?? 'long_running',
         reasoners,
         skills
       });

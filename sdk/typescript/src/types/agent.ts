@@ -1,6 +1,10 @@
+import type http from 'node:http';
 import type { ReasonerDefinition } from './reasoner.js';
 import type { SkillDefinition } from './skill.js';
 import type { MemoryChangeEvent, MemoryWatchHandler } from '../memory/MemoryInterface.js';
+import type { ExecutionMetadata } from '../context/ExecutionContext.js';
+
+export type DeploymentType = 'long_running' | 'serverless';
 
 export interface AgentConfig {
   nodeId: string;
@@ -17,6 +21,7 @@ export interface AgentConfig {
   heartbeatIntervalMs?: number;
   defaultHeaders?: Record<string, string | number | boolean | undefined>;
   mcp?: MCPConfig;
+  deploymentType?: DeploymentType;
 }
 
 export interface AIConfig {
@@ -27,6 +32,13 @@ export interface AIConfig {
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
+   enableRateLimitRetry?: boolean;
+   rateLimitMaxRetries?: number;
+   rateLimitBaseDelay?: number;
+   rateLimitMaxDelay?: number;
+   rateLimitJitterFactor?: number;
+   rateLimitCircuitBreakerThreshold?: number;
+   rateLimitCircuitBreakerTimeout?: number;
 }
 
 export interface MemoryConfig {
@@ -148,5 +160,34 @@ export interface HealthStatus {
   nodeId: string;
   version?: string;
 }
+
+export interface ServerlessEvent {
+  path?: string;
+  rawPath?: string;
+  httpMethod?: string;
+  method?: string;
+  action?: string;
+  headers?: Record<string, string | undefined>;
+  queryStringParameters?: Record<string, string | undefined>;
+  target?: string;
+  reasoner?: string;
+  skill?: string;
+  type?: 'reasoner' | 'skill';
+  body?: any;
+  input?: any;
+  executionContext?: Partial<ExecutionMetadata>;
+  execution_context?: Partial<ExecutionMetadata>;
+}
+
+export interface ServerlessResponse {
+  statusCode: number;
+  headers?: Record<string, string>;
+  body: any;
+}
+
+export type AgentHandler = (
+  event: ServerlessEvent | http.IncomingMessage,
+  res?: http.ServerResponse
+) => Promise<ServerlessResponse | void> | ServerlessResponse | void;
 
 export type Awaitable<T> = T | Promise<T>;

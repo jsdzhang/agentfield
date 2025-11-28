@@ -112,9 +112,17 @@ export class AgentFieldClient {
       duration_ms: event.durationMs
     };
 
-    await this.http.post('/api/v1/workflow/executions/events', payload, { headers: this.mergeHeaders() }).catch(() => {
-      // Best-effort; avoid throwing to keep agent execution resilient
-    });
+    const request = this.http
+      .post('/api/v1/workflow/executions/events', payload, {
+        headers: this.mergeHeaders(),
+        timeout: this.config.devMode ? 1000 : undefined
+      })
+      .catch(() => {
+        // Best-effort; avoid throwing to keep agent execution resilient
+      });
+
+    // Fire and forget to avoid blocking local executions in tests/dev mode.
+    void request;
   }
 
   async updateExecutionStatus(executionId: string, update: ExecutionStatusUpdate) {

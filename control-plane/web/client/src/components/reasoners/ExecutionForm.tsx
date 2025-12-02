@@ -279,6 +279,8 @@ export function ExecutionForm({ schema, formData, onChange, validationErrors }: 
   const [rawJsonDraft, setRawJsonDraft] = useState<string>(() => formatJson(initialValues));
   const [rawJsonError, setRawJsonError] = useState<string | null>(null);
   const formRef = useRef<UseFormReturn<any> | null>(null);
+  const skipNextInitialSyncRef = useRef(false);
+  const isSyncingFromPropsRef = useRef(false);
   const subscriptionRef = useRef<ReturnType<UseFormReturn<any>["watch"]> | null>(null);
 
   const provider = useMemo(() => {
@@ -295,8 +297,25 @@ export function ExecutionForm({ schema, formData, onChange, validationErrors }: 
   }, [schema]);
 
   useEffect(() => {
+    if (skipNextInitialSyncRef.current) {
+      skipNextInitialSyncRef.current = false;
+      return;
+    }
+
     setRawJsonDraft(formatJson(initialValues));
     setRawJsonError(null);
+
+    const form = formRef.current;
+    if (!form) {
+      return;
+    }
+
+    const currentValues = form.getValues();
+    if (!isDeepEqual(currentValues, initialValues)) {
+      isSyncingFromPropsRef.current = true;
+      form.reset(initialValues);
+      isSyncingFromPropsRef.current = false;
+    }
   }, [initialValues]);
 
   const attachWatcher = useCallback(
@@ -305,10 +324,21 @@ export function ExecutionForm({ schema, formData, onChange, validationErrors }: 
       subscriptionRef.current = form.watch((values) => {
         setRawJsonDraft(formatJson(values));
         setRawJsonError(null);
-        onChange((previous: any) => ({
-          ...previous,
-          input: values,
-        }));
+
+        if (isSyncingFromPropsRef.current) {
+          return;
+        }
+
+        skipNextInitialSyncRef.current = true;
+        onChange((previous: any) => {
+          if (isDeepEqual(previous?.input, values)) {
+            return previous;
+          }
+          return {
+            ...previous,
+            input: values,
+          };
+        });
       });
     },
     [onChange]
@@ -318,7 +348,9 @@ export function ExecutionForm({ schema, formData, onChange, validationErrors }: 
     (form: UseFormReturn<any>) => {
       formRef.current = form;
       attachWatcher(form);
+      isSyncingFromPropsRef.current = true;
       form.reset(initialValues);
+      isSyncingFromPropsRef.current = false;
     },
     [attachWatcher, initialValues]
   );
@@ -329,17 +361,6 @@ export function ExecutionForm({ schema, formData, onChange, validationErrors }: 
     };
   }, []);
 
-  useEffect(() => {
-    const form = formRef.current;
-    if (!form) {
-      return;
-    }
-    const currentValues = form.getValues();
-    if (!isDeepEqual(currentValues, initialValues)) {
-      form.reset(initialValues);
-    }
-  }, [initialValues]);
-
   const handleRawJsonChange = (value: string) => {
     setRawJsonDraft(value);
     if (!value.trim()) {
@@ -348,7 +369,16 @@ export function ExecutionForm({ schema, formData, onChange, validationErrors }: 
     }
     try {
       const parsed = JSON.parse(value);
-      formRef.current?.reset(parsed);
+      if (formRef.current) {
+        isSyncingFromPropsRef.current = true;
+        formRef.current.reset(parsed);
+        isSyncingFromPropsRef.current = false;
+      }
+      skipNextInitialSyncRef.current = true;
+      onChange((previous: any) => ({
+        ...previous,
+        input: parsed,
+      }));
       setRawJsonError(null);
     } catch {
       setRawJsonError("Invalid JSON");

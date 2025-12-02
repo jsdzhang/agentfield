@@ -1,8 +1,0 @@
-[phases.setup]
-nixPkgs = ["python311"]
-
-[phases.install]
-cmds = ["./install.sh"]
-
-[start]
-cmd = "python -m agentfield.run"

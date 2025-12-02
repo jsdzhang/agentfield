@@ -16,19 +16,15 @@ fi
 # Parse minimum version from requirement (handles >=X.Y.Z format)
 MIN_VERSION=$(echo "$AGENTFIELD_REQ" | sed -E 's/agentfield[>=<]+//' | tr -d ' ')
 
-echo "Waiting for agentfield>=$MIN_VERSION to be available on PyPI..."
+echo "Checking for agentfield>=$MIN_VERSION on PyPI..."
 
 MAX_RETRIES=30
 RETRY_INTERVAL=10
 
 for i in $(seq 1 $MAX_RETRIES); do
-    # Check if the version is available on PyPI
-    AVAILABLE=$(pip index versions agentfield 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -20 || echo "")
-
-    if echo "$AVAILABLE" | grep -qE "^${MIN_VERSION}$|^[0-9]+\.[0-9]+\.[1-9][0-9]*$"; then
-        # Version found or a higher version exists
-        LATEST=$(echo "$AVAILABLE" | head -1)
-        echo "Found agentfield $LATEST on PyPI"
+    # Try to install the specific version to check if it exists
+    if pip install --dry-run "agentfield>=$MIN_VERSION" >/dev/null 2>&1; then
+        echo "agentfield>=$MIN_VERSION is available on PyPI"
         break
     fi
 
@@ -38,7 +34,7 @@ for i in $(seq 1 $MAX_RETRIES); do
         break
     fi
 
-    echo "Attempt $i/$MAX_RETRIES: agentfield $MIN_VERSION not yet available, waiting ${RETRY_INTERVAL}s..."
+    echo "Attempt $i/$MAX_RETRIES: agentfield>=$MIN_VERSION not yet available, waiting ${RETRY_INTERVAL}s..."
     sleep $RETRY_INTERVAL
 done
 

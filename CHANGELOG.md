@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 <!-- changelog:entries -->
 
+## [0.1.25-rc.1] - 2025-12-21
+
+
+### Other
+
+- Added note() method for fire-and-forget execution logging (#100) (55fdcf1)
+
+- URL-encode badge endpoint and add cache control (8a4c970)
+
+- Fix shields.io badge: separate badge.json and stats.json files (7d08183)
+
+- Add workflow to update download stats (#87)
+
+* Add workflow to update download stats
+
+Adds a GitHub Actions workflow to automate the collection and updating of download statistics from GitHub releases, PyPI, and NPM.
+
+This workflow:
+- Runs every 6 hours or can be triggered manually.
+- Fetches download counts from GitHub releases and aggregates them.
+- Retrieves total downloads from Pepy.tech for PyPI.
+- Collects lifetime download statistics from NPM.
+- Calculates a combined total and updates a Gist file.
+- The README's download badge is updated to point to this new Gist endpoint for more comprehensive stats.
+
+* Add push trigger for download stats workflow
+
+* Add permissions block to download stats workflow (d400e36)
+
 ## [0.1.24] - 2025-12-18
 
 ## [0.1.24-rc.3] - 2025-12-18

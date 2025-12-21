@@ -63,4 +63,4 @@ __all__ = [
     "detect_multimodal_response",
 ]
 
-__version__ = "0.1.24"
+__version__ = "0.1.25-rc.1"
